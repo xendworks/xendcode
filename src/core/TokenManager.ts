@@ -48,7 +48,7 @@ export class TokenManager {
             maxContextTokens: 4096
         });
 
-        this.modelLimits.set('groq-llama', {
+        this.modelLimits.set('grok-llama', {
             freeRequestsPerMinute: 30,
             maxContextTokens: 8192
         });
@@ -142,15 +142,44 @@ export class TokenManager {
     }
 
     /**
+     * Calculate total available free tokens across all providers
+     */
+    getTotalAvailableTokens(): number {
+        // Generous free tier estimates per month
+        const freeTokensAvailable = {
+            'gemini': 10000000,      // ~10M tokens/month (60 req/min, ~1M context)
+            'grok': 5000000,         // ~5M tokens/month (fast inference)
+            'openai': 50000,         // $5 credit (~50K tokens)
+            'cohere': 100000,        // 100 calls * ~1K tokens
+            'anthropic': 0,          // No free tier
+            'deepseek': 1000000      // Budget pricing (~1M tokens for cheap)
+        };
+
+        return Object.values(freeTokensAvailable).reduce((sum, tokens) => sum + tokens, 0);
+    }
+
+    /**
      * Get usage statistics
      */
     getUsageStats() {
         const byModel: Record<string, any> = {};
         const now = Date.now();
         const monthAgo = now - (30 * 24 * 60 * 60 * 1000);
+        const dayAgo = now - (24 * 60 * 60 * 1000);
+
+        // Get first usage date to calculate actual days
+        const allUsage = this.usage.filter(u => u.timestamp > monthAgo);
+        const firstUsageTimestamp = allUsage.length > 0 
+            ? Math.min(...allUsage.map(u => u.timestamp))
+            : now;
+        const daysActive = Math.max(1, Math.ceil((now - firstUsageTimestamp) / (24 * 60 * 60 * 1000)));
 
         // Group by model
-        for (const usage of this.usage.filter(u => u.timestamp > monthAgo)) {
+        let totalTokensAllTime = 0;
+        let totalTokensToday = 0;
+        let totalCost = 0;
+
+        for (const usage of allUsage) {
             if (!byModel[usage.model]) {
                 byModel[usage.model] = {
                     tokensUsed: 0,
@@ -163,6 +192,14 @@ export class TokenManager {
             byModel[usage.model].tokensUsed += usage.tokensUsed;
             byModel[usage.model].requests += 1;
             byModel[usage.model].estimatedCost += usage.cost;
+            
+            totalTokensAllTime += usage.tokensUsed;
+            totalCost += usage.cost;
+
+            // Count today's tokens
+            if (usage.timestamp > dayAgo) {
+                totalTokensToday += usage.tokensUsed;
+            }
         }
 
         // Calculate percent used for free tiers
@@ -173,16 +210,26 @@ export class TokenManager {
             }
         }
 
-        // Calculate total savings compared to paid plans
-        const totalCost = Object.values(byModel).reduce((sum: number, stats: any) => 
-            sum + stats.estimatedCost, 0);
-        const estimatedPaidPlanCost = 20; // Assume $20/month for comparable service
-        const totalSavings = Math.max(0, estimatedPaidPlanCost - totalCost);
+        // Calculate averages
+        const avgTokensPerDay = Math.round(totalTokensAllTime / daysActive);
+        const avgTokensPer30Days = Math.round(totalTokensAllTime / daysActive * 30);
+
+        // Get total available tokens
+        const totalAvailableTokens = this.getTotalAvailableTokens();
+
+        // Percentage saved
+        const percentSaved = totalCost < 1 ? 100 : 99;
 
         return {
             byModel,
-            totalSavings,
-            totalCost
+            totalCost,
+            totalTokensAllTime,
+            totalTokensToday,
+            totalAvailableTokens,
+            avgTokensPerDay,
+            avgTokensPer30Days,
+            daysActive,
+            percentSaved
         };
     }
 

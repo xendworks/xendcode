@@ -26,36 +26,60 @@ export class UsageTreeProvider implements vscode.TreeDataProvider<UsageItem> {
         const stats = this.tokenManager.getUsageStats();
         const items: UsageItem[] = [];
 
-        // Add total savings
+        // Format tokens
+        const formatTokens = (tokens: number) => {
+            if (tokens >= 1000000) {
+                return `${(tokens / 1000000).toFixed(1)}M`;
+            }
+            return `${(tokens / 1000).toFixed(1)}K`;
+        };
+
+        // HERO STAT: Used today / Total available
         items.push(new UsageItem(
-            `Savings: $${stats.totalSavings.toFixed(2)}`,
-            '',
+            `Today: ${formatTokens(stats.totalTokensToday)}/${formatTokens(stats.totalAvailableTokens)}`,
+            'tokens used',
+            vscode.TreeItemCollapsibleState.None,
+            '📊'
+        ));
+
+        // Total used this month
+        items.push(new UsageItem(
+            `This Month: ${formatTokens(stats.totalTokensAllTime)}`,
+            `${stats.daysActive} days active`,
+            vscode.TreeItemCollapsibleState.None,
+            '🚀'
+        ));
+
+        // Average per day
+        items.push(new UsageItem(
+            `Avg/Day: ${formatTokens(stats.avgTokensPerDay)}`,
+            'Daily average',
+            vscode.TreeItemCollapsibleState.None,
+            '📈'
+        ));
+
+        // Cost and savings
+        items.push(new UsageItem(
+            `You Paid: $${stats.totalCost.toFixed(2)}`,
+            `${stats.percentSaved}% saved!`,
             vscode.TreeItemCollapsibleState.None,
             '💰'
         ));
 
-        // Add total cost
-        items.push(new UsageItem(
-            `Total Cost: $${stats.totalCost.toFixed(4)}`,
-            '',
-            vscode.TreeItemCollapsibleState.None,
-            '💵'
-        ));
-
-        // Add per-model usage
-        for (const [model, data] of Object.entries(stats.byModel)) {
-            const label = `${model}: ${data.tokensUsed.toLocaleString()} tokens`;
-            const description = `$${data.estimatedCost.toFixed(4)}`;
-            
-            items.push(new UsageItem(
-                label,
-                description,
-                vscode.TreeItemCollapsibleState.None,
-                '📊'
-            ));
-        }
-
-        if (items.length === 2) {
+        // Per-model breakdown (if any)
+        if (Object.keys(stats.byModel).length > 0) {
+            for (const [model, data] of Object.entries(stats.byModel)) {
+                const label = `${model}: ${formatTokens(data.tokensUsed)}`;
+                const description = `$${data.estimatedCost.toFixed(4)}`;
+                
+                items.push(new UsageItem(
+                    label,
+                    description,
+                    vscode.TreeItemCollapsibleState.None,
+                    '🤖'
+                ));
+            }
+        } else {
             items.push(new UsageItem(
                 'No usage yet',
                 'Start chatting!',

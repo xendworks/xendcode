@@ -271,6 +271,9 @@ export class SetupWizard {
             case 'gemini':
                 const { GeminiProvider } = await import('../models/GeminiProvider');
                 return GeminiProvider;
+            case 'grok':
+                const { GrokProvider } = await import('../models/GrokProvider');
+                return GrokProvider;
             case 'groq':
                 const { GroqProvider } = await import('../models/GroqProvider');
                 return GroqProvider;
@@ -311,14 +314,14 @@ export class SetupWizard {
             },
             {
                 id: '2',
-                name: 'Groq',
-                provider: 'groq',
+                name: 'grok',
+                provider: 'grok',
                 priority: 'high',
-                signupUrl: 'https://console.groq.com',
-                apiKeyUrl: 'https://console.groq.com/keys',
+                signupUrl: 'https://console.grok.com',
+                apiKeyUrl: 'https://console.grok.com/keys',
                 instructions: 'Sign up → Go to API Keys → Create new key → Copy',
                 freeTier: '30 requests/minute - FREE with fast inference!',
-                completed: !!config.get('models.groq.apiKey')
+                completed: !!config.get('models.grok.apiKey')
             },
             {
                 id: '3',
@@ -565,7 +568,7 @@ export class SetupWizard {
         
         .input-group input:focus {
             outline: none;
-            border-color: var(--vscode-focusBorder);
+            border-color: var(--vscode-panel-border);
         }
         
         .validation-message {
@@ -740,7 +743,7 @@ export class SetupWizard {
                 el.classList.add('validation-error');
             }
             
-            el.innerHTML = message;
+            el.textContent = message; // Safe: no HTML injection
         }
 
         function openDocs() {

@@ -1,17 +1,18 @@
 import { IModelProvider, ModelConfig, ModelCapability, ChatMessage, CompletionOptions, CompletionResponse } from '../types';
 
-export class DeepSeekProvider implements IModelProvider {
+export class GrokProvider implements IModelProvider {
     private apiKey: string;
     private config: ModelConfig;
+    private baseURL = 'https://api.x.ai/v1';
 
     constructor(apiKey: string) {
         this.apiKey = apiKey;
 
         this.config = {
-            name: 'deepseek-chat',
-            provider: 'DeepSeek',
-            maxTokens: 64000,
-            costPer1kTokens: 0.14, // $0.14/1M input, $0.28/1M output
+            name: 'grok-beta',
+            provider: 'Grok',
+            maxTokens: 131072,
+            costPer1kTokens: 0.005, // $5 per 1M tokens
             capabilities: [
                 'code-completion',
                 'code-explanation',
@@ -21,13 +22,13 @@ export class DeepSeekProvider implements IModelProvider {
                 'general-chat'
             ],
             freeTier: {
-                tokensPerMonth: 1000000 // 1M tokens free
+                tokensPerMonth: 25000 // Free credits for new users
             }
         };
     }
 
     getName(): string {
-        return 'DeepSeek Chat';
+        return 'xAI Grok';
     }
 
     getConfig(): ModelConfig {
@@ -43,7 +44,7 @@ export class DeepSeekProvider implements IModelProvider {
     }
 
     hasFreeTierAvailable(): boolean {
-        return true;
+        return true; // Grok offers free credits
     }
 
     supportsCapability(capability: ModelCapability): boolean {
@@ -52,14 +53,14 @@ export class DeepSeekProvider implements IModelProvider {
 
     getQualityScore(capability: ModelCapability): number {
         const scores: Record<ModelCapability, number> = {
-            'code-completion': 9,
-            'code-explanation': 9,
-            'code-refactoring': 9,
-            'bug-fixing': 9,
-            'documentation': 8,
+            'code-completion': 7,
+            'code-explanation': 7,
+            'code-refactoring': 7,
+            'bug-fixing': 7,
+            'documentation': 7,
             'general-chat': 8
         };
-        return scores[capability] || 8;
+        return scores[capability] || 7;
     }
 
     async complete(
@@ -67,48 +68,50 @@ export class DeepSeekProvider implements IModelProvider {
         options?: CompletionOptions
     ): Promise<CompletionResponse> {
         if (!this.apiKey) {
-            throw new Error('DeepSeek API key not configured');
+            throw new Error('Grok API key not configured');
         }
 
         try {
-            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            const response = await fetch(`${this.baseURL}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.apiKey}`
                 },
                 body: JSON.stringify({
-                    model: 'deepseek-chat',
+                    model: 'grok-beta',
                     messages: messages.map(m => ({
                         role: m.role,
                         content: m.content
                     })),
                     max_tokens: options?.maxTokens || 2000,
-                    temperature: options?.temperature || 0.7
+                    temperature: options?.temperature || 0.7,
+                    stream: false
                 })
             });
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(`DeepSeek API error: ${error.error?.message || response.statusText}`);
+                throw new Error(`Grok API error: ${error.error?.message || response.statusText}`);
             }
 
             const data = await response.json();
             const choice = data.choices[0];
+            const usage = data.usage;
 
             return {
                 content: choice.message.content,
                 tokensUsed: {
-                    input: data.usage?.prompt_tokens || 0,
-                    output: data.usage?.completion_tokens || 0,
-                    total: data.usage?.total_tokens || 0
+                    input: usage?.prompt_tokens || 0,
+                    output: usage?.completion_tokens || 0,
+                    total: usage?.total_tokens || 0
                 },
-                model: 'deepseek-chat',
-                finishReason: choice.finish_reason,
-                cost: this.calculateCost(data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0)
+                model: 'grok-beta',
+                finishReason: choice.finish_reason || 'stop',
+                cost: ((usage?.total_tokens || 0) / 1000) * this.config.costPer1kTokens
             };
         } catch (error: any) {
-            throw new Error(`DeepSeek completion failed: ${error.message}`);
+            throw new Error(`Grok completion failed: ${error.message}`);
         }
     }
 
@@ -118,18 +121,18 @@ export class DeepSeekProvider implements IModelProvider {
         onChunk?: (chunk: string) => void
     ): Promise<CompletionResponse> {
         if (!this.apiKey) {
-            throw new Error('DeepSeek API key not configured');
+            throw new Error('Grok API key not configured');
         }
 
         try {
-            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            const response = await fetch(`${this.baseURL}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.apiKey}`
                 },
                 body: JSON.stringify({
-                    model: 'deepseek-chat',
+                    model: 'grok-beta',
                     messages: messages.map(m => ({
                         role: m.role,
                         content: m.content
@@ -142,7 +145,7 @@ export class DeepSeekProvider implements IModelProvider {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(`DeepSeek API error: ${error.error?.message || response.statusText}`);
+                throw new Error(`Grok API error: ${error.error?.message || response.statusText}`);
             }
 
             let fullContent = '';
@@ -187,18 +190,12 @@ export class DeepSeekProvider implements IModelProvider {
                     output: estimatedTokens,
                     total: inputTokens + estimatedTokens
                 },
-                model: 'deepseek-chat',
+                model: 'grok-beta',
                 finishReason: 'stop',
-                cost: this.calculateCost(inputTokens, estimatedTokens)
+                cost: ((inputTokens + estimatedTokens) / 1000) * this.config.costPer1kTokens
             };
         } catch (error: any) {
-            throw new Error(`DeepSeek stream failed: ${error.message}`);
+            throw new Error(`Grok stream failed: ${error.message}`);
         }
-    }
-
-    private calculateCost(inputTokens: number, outputTokens: number): number {
-        const inputCost = (inputTokens / 1000000) * 0.14;
-        const outputCost = (outputTokens / 1000000) * 0.28;
-        return inputCost + outputCost;
     }
 }

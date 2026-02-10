@@ -104,4 +104,53 @@ export class OpenAIProvider implements IModelProvider {
             throw new Error(`OpenAI API error: ${error.message}`);
         }
     }
+
+    async completeStream(
+        messages: ChatMessage[],
+        options?: CompletionOptions,
+        onChunk?: (chunk: string) => void
+    ): Promise<CompletionResponse> {
+        if (!this.client) {
+            throw new Error('OpenAI client not configured');
+        }
+
+        try {
+            const stream = await this.client.chat.completions.create({
+                model: 'gpt-3.5-turbo',
+                messages: messages as any,
+                max_tokens: options?.maxTokens || 1000,
+                temperature: options?.temperature || 0.7,
+                stream: true
+            });
+
+            let fullContent = '';
+            for await (const chunk of stream) {
+                const content = chunk.choices[0]?.delta?.content || '';
+                if (content) {
+                    fullContent += content;
+                    if (onChunk) {
+                        onChunk(content);
+                    }
+                }
+            }
+
+            // Estimate tokens (rough approximation)
+            const estimatedTokens = Math.ceil(fullContent.length / 4);
+            const estimatedInputTokens = Math.ceil(messages.reduce((sum, m) => sum + m.content.length, 0) / 4);
+
+            return {
+                content: fullContent,
+                tokensUsed: {
+                    input: estimatedInputTokens,
+                    output: estimatedTokens,
+                    total: estimatedInputTokens + estimatedTokens
+                },
+                model: 'gpt-3.5-turbo',
+                finishReason: 'stop',
+                cost: ((estimatedInputTokens + estimatedTokens) / 1000) * this.config.costPer1kTokens
+            };
+        } catch (error: any) {
+            throw new Error(`OpenAI API error: ${error.message}`);
+        }
+    }
 }

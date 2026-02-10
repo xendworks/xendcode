@@ -6,6 +6,9 @@ interface ProviderConfig {
     name: string;
     icon: string;
     color: string;
+    description: string;
+    freeTier: boolean;
+    freeCredit?: string;
     authUrl: string;
     tokenUrl: string;
     instructions: string[];
@@ -23,8 +26,10 @@ export class ModernSetupWizard {
         {
             id: 'gemini',
             name: 'Google Gemini',
-            icon: '🔮',
-            color: '#4285F4',
+            icon: 'gemini.svg',
+            color: '#8E75FF',
+            description: '60 req/min • 1M context • Best for everything',
+            freeTier: true,
             authUrl: 'https://makersuite.google.com',
             tokenUrl: 'https://makersuite.google.com/app/apikey',
             instructions: [
@@ -35,10 +40,31 @@ export class ModernSetupWizard {
             canAutomate: true
         },
         {
+            id: 'grok',
+            name: 'Grok',
+            icon: 'grok.svg',
+            color: '#000000',
+            description: 'Elon\'s xAI • 131K context • Powerful reasoning',
+            freeTier: true,
+            freeCredit: '$25 credits',
+            authUrl: 'https://console.x.ai',
+            tokenUrl: 'https://console.x.ai',
+            instructions: [
+                'Sign up at console.x.ai',
+                'Get free $25 credits',
+                'Navigate to API Keys section',
+                'Generate new API key',
+                'Copy the key'
+            ],
+            canAutomate: false
+        },
+        {
             id: 'groq',
             name: 'Groq',
-            icon: '⚡',
-            color: '#FF6B00',
+            icon: 'groq.svg',
+            color: '#F55036',
+            description: '30 req/min • Fast inference • Quick responses',
+            freeTier: true,
             authUrl: 'https://console.groq.com',
             tokenUrl: 'https://console.groq.com/keys',
             instructions: [
@@ -50,25 +76,46 @@ export class ModernSetupWizard {
             canAutomate: true
         },
         {
-            id: 'openai',
-            name: 'OpenAI',
-            icon: '🤖',
-            color: '#10A37F',
-            authUrl: 'https://platform.openai.com',
-            tokenUrl: 'https://platform.openai.com/api-keys',
+            id: 'deepseek',
+            name: 'DeepSeek',
+            icon: 'deepseek.svg',
+            color: '#0FA0CE',
+            description: '1M tokens free • Excellent for code • Low cost',
+            freeTier: true,
+            authUrl: 'https://platform.deepseek.com',
+            tokenUrl: 'https://platform.deepseek.com/api-keys',
+            instructions: [
+                'Sign up with email',
+                'Go to API Keys',
+                'Create new API key',
+                'Copy the key'
+            ],
+            canAutomate: true
+        },
+        {
+            id: 'mistral',
+            name: 'Mistral',
+            icon: 'mistral.svg',
+            color: '#F2A73B',
+            description: '30 req/min • Mistral Large • Great for analysis',
+            freeTier: true,
+            authUrl: 'https://console.mistral.ai',
+            tokenUrl: 'https://console.mistral.ai/api-keys',
             instructions: [
                 'Sign up or log in',
-                'Go to API keys section',
-                'Create new secret key',
-                'Copy the key immediately (shown only once)'
+                'Navigate to API Keys',
+                'Create API key',
+                'Copy the key'
             ],
-            canAutomate: false
+            canAutomate: true
         },
         {
             id: 'cohere',
             name: 'Cohere',
-            icon: '🎯',
-            color: '#39A0ED',
+            icon: 'cohere.svg',
+            color: '#39594D',
+            description: 'Trial API • Good for documentation',
+            freeTier: true,
             authUrl: 'https://dashboard.cohere.com',
             tokenUrl: 'https://dashboard.cohere.com/api-keys',
             instructions: [
@@ -78,6 +125,24 @@ export class ModernSetupWizard {
                 'Copy the key'
             ],
             canAutomate: true
+        },
+        {
+            id: 'openai',
+            name: 'OpenAI',
+            icon: 'openai.svg',
+            color: '#10A37F',
+            description: 'GPT-3.5 Turbo • High quality responses',
+            freeTier: false,
+            freeCredit: '$5 CREDIT',
+            authUrl: 'https://platform.openai.com',
+            tokenUrl: 'https://platform.openai.com/api-keys',
+            instructions: [
+                'Sign up or log in',
+                'Go to API keys section',
+                'Create new secret key',
+                'Copy the key immediately (shown only once)'
+            ],
+            canAutomate: false
         }
     ];
 
@@ -97,11 +162,15 @@ export class ModernSetupWizard {
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                retainContextWhenHidden: true
+                retainContextWhenHidden: true,
+                localResourceRoots: [
+                    vscode.Uri.joinPath(this.context.extensionUri, 'resources')
+                ]
             }
         );
 
         this.currentPanel = panel;
+        this.currentWebview = panel.webview;
         panel.webview.html = this.getModernWizardHTML(panel.webview);
 
         panel.webview.onDidReceiveMessage(async (message) => {
@@ -126,6 +195,14 @@ export class ModernSetupWizard {
                     
                 case 'validateAndSave':
                     await this.validateAndSaveKey(message.provider, message.apiKey);
+                    break;
+                    
+                case 'complete':
+                    // Close wizard and open chat
+                    panel.dispose();
+                    this.currentPanel = undefined;
+                    // Open chat window
+                    vscode.commands.executeCommand('xendcode.chat');
                     break;
             }
         });
@@ -212,7 +289,7 @@ export class ModernSetupWizard {
         const patterns = [
             /^AIza[0-9A-Za-z-_]{35}$/,  // Google
             /^sk-[A-Za-z0-9]{48}$/,      // OpenAI
-            /^gsk_[A-Za-z0-9]{52}$/,     // Groq
+            /^gsk_[A-Za-z0-9]{52}$/,     // grok
             /^[A-Za-z0-9]{40,}$/         // Generic long key
         ];
         
@@ -259,6 +336,9 @@ export class ModernSetupWizard {
             case 'gemini':
                 const { GeminiProvider } = await import('../models/GeminiProvider');
                 return GeminiProvider;
+            case 'grok':
+                const { GrokProvider } = await import('../models/GrokProvider');
+                return GrokProvider;
             case 'groq':
                 const { GroqProvider } = await import('../models/GroqProvider');
                 return GroqProvider;
@@ -268,8 +348,29 @@ export class ModernSetupWizard {
             case 'cohere':
                 const { CohereProvider } = await import('../models/CohereProvider');
                 return CohereProvider;
+            case 'deepseek':
+                const { DeepSeekProvider } = await import('../models/DeepSeekProvider');
+                return DeepSeekProvider;
+            case 'mistral':
+                const { MistralProvider } = await import('../models/MistralProvider');
+                return MistralProvider;
+            case 'anthropic':
+                const { AnthropicProvider } = await import('../models/AnthropicProvider');
+                return AnthropicProvider;
             default:
                 throw new Error(`Unknown provider: ${provider}`);
+        }
+    }
+
+    private getLogoUri(webview: vscode.Webview, logoFile: string): string {
+        try {
+            const logoPath = vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'logos', logoFile);
+            const uri = webview.asWebviewUri(logoPath);
+            console.log('Logo URI generated:', logoFile, '→', uri.toString());
+            return uri.toString();
+        } catch (error) {
+            console.error('Failed to generate logo URI:', logoFile, error);
+            return '';
         }
     }
 
@@ -321,42 +422,119 @@ export class ModernSetupWizard {
             font-size: 14px;
         }
         
-        .progress-steps {
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-            padding: 24px 0;
-            margin-bottom: 32px;
+        /* Progress bar styles */
+        .progress-nav {
+            margin-bottom: 40px;
+            padding-bottom: 0;
         }
         
-        .step {
+        .progress-list {
+            list-style: none;
+            display: flex;
+            margin: 0;
+            padding: 0;
+            border-bottom: 2px solid var(--vscode-panel-border);
+            position: relative;
+        }
+        
+        .progress-item {
+            position: relative;
+            flex: 1;
+            padding: 0;
+        }
+        
+        .progress-bar {
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: transparent;
+            transition: background 0.3s;
+            z-index: 10;
+        }
+        
+        .progress-item.completed .progress-bar {
+            background: #10b981;
+        }
+        
+        .progress-item.current .progress-bar {
+            background: #667eea;
+        }
+        
+        .progress-content {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            border-radius: 6px;
+            padding: 12px 16px 16px;
+            gap: 10px;
+        }
+        
+        .progress-icon {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--vscode-panel-border);
             background: var(--vscode-input-background);
-            border: 1px solid var(--vscode-panel-border);
+            transition: all 0.2s;
         }
         
-        .step.active {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border-color: var(--vscode-button-background);
+        .progress-item.completed .progress-icon {
+            background: #10b981;
+            border-color: #10b981;
+            color: white;
         }
         
-        .step.completed {
-            background: var(--vscode-input-background);
-            border-color: var(--vscode-charts-green);
+        .progress-item.current .progress-icon {
+            background: transparent;
+            border-color: #667eea;
+            color: #667eea;
         }
         
-        .step-number {
+        .progress-item.upcoming .progress-icon {
+            border-color: var(--vscode-panel-border);
+            color: var(--vscode-descriptionForeground);
+            opacity: 0.6;
+        }
+        
+        .check-icon {
+            width: 16px;
+            height: 16px;
+        }
+        
+        .progress-number {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .progress-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .progress-title {
             font-size: 12px;
             font-weight: 600;
+            color: var(--vscode-foreground);
         }
         
-        .step-label {
-            font-size: 13px;
+        .progress-item.current .progress-title {
+            color: #667eea;
+        }
+        
+        .progress-item.upcoming .progress-title {
+            color: var(--vscode-descriptionForeground);
+            opacity: 0.7;
+        }
+        
+        .progress-subtitle {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            opacity: 0.8;
         }
         
         .wizard-content {
@@ -416,6 +594,12 @@ export class ModernSetupWizard {
             border-radius: 8px;
         }
         
+        .provider-icon img {
+            width: 40px;
+            height: 40px;
+            object-fit: contain;
+        }
+        
         .provider-info {
             flex: 1;
         }
@@ -448,6 +632,23 @@ export class ModernSetupWizard {
         .badge-credit {
             background: var(--vscode-charts-blue);
             color: white;
+        }
+        
+        .badge-connected {
+            background: var(--vscode-editorInfo-background);
+            color: var(--vscode-editorInfo-foreground);
+            border: 1px solid var(--vscode-charts-blue);
+        }
+        
+        .provider-card.connected {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: var(--vscode-input-background);
+        }
+        
+        .provider-card.connected:hover {
+            background: var(--vscode-input-background);
+            transform: none;
         }
         
         .auth-section {
@@ -556,7 +757,7 @@ export class ModernSetupWizard {
         
         .instructions {
             background: var(--vscode-textBlockQuote-background);
-            border-left: 3px solid var(--vscode-textBlockQuote-border);
+            border: 1px solid var(--vscode-panel-border);
             padding: 12px;
             margin: 16px 0;
             border-radius: 4px;
@@ -588,25 +789,63 @@ export class ModernSetupWizard {
             <p>Connect your AI providers</p>
         </div>
         
-        <div class="progress-steps">
-            <div class="step ${this.currentStep >= 0 ? 'active' : ''} ${this.currentStep > 0 ? 'completed' : ''}">
-                <span class="step-number">1.</span>
-                <span class="step-label">Select Providers</span>
-            </div>
-            <div class="step ${this.currentStep >= 1 ? 'active' : ''} ${this.currentStep > 1 ? 'completed' : ''}">
-                <span class="step-number">2.</span>
-                <span class="step-label">Authorize</span>
-            </div>
-            <div class="step ${this.currentStep >= 2 ? 'active' : ''}">
-                <span class="step-number">3.</span>
-                <span class="step-label">Complete</span>
-            </div>
-        </div>
+        <nav class="progress-nav">
+            <ol class="progress-list">
+                <li class="progress-item ${this.currentStep > 0 ? 'completed' : (this.currentStep === 0 ? 'current' : 'upcoming')}">
+                    <div class="progress-bar"></div>
+                    <div class="progress-content">
+                        <span class="progress-icon">
+                            ${this.currentStep > 0 
+                                ? '<svg viewBox="0 0 24 24" fill="currentColor" class="check-icon"><path d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z"/></svg>'
+                                : '<span class="progress-number">1</span>'
+                            }
+                        </span>
+                        <div class="progress-text">
+                            <span class="progress-title">Select Providers</span>
+                            <span class="progress-subtitle">Choose AI models</span>
+                        </div>
+                    </div>
+                </li>
+                
+                <li class="progress-item ${this.currentStep > 1 ? 'completed' : (this.currentStep === 1 ? 'current' : 'upcoming')}">
+                    <div class="progress-bar"></div>
+                    <div class="progress-content">
+                        <span class="progress-icon">
+                            ${this.currentStep > 1
+                                ? '<svg viewBox="0 0 24 24" fill="currentColor" class="check-icon"><path d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z"/></svg>'
+                                : '<span class="progress-number">2</span>'
+                            }
+                        </span>
+                        <div class="progress-text">
+                            <span class="progress-title">Authorize</span>
+                            <span class="progress-subtitle">Add API keys</span>
+                        </div>
+                    </div>
+                </li>
+                
+                <li class="progress-item ${this.currentStep > 2 ? 'completed' : (this.currentStep === 2 ? 'current' : 'upcoming')}">
+                    <div class="progress-bar"></div>
+                    <div class="progress-content">
+                        <span class="progress-icon">
+                            ${this.currentStep > 2
+                                ? '<svg viewBox="0 0 24 24" fill="currentColor" class="check-icon"><path d="M19.916 4.626a.75.75 0 0 1 .208 1.04l-9 13.5a.75.75 0 0 1-1.154.114l-6-6a.75.75 0 0 1 1.06-1.06l5.353 5.353 8.493-12.74a.75.75 0 0 1 1.04-.207Z"/></svg>'
+                                : '<span class="progress-number">3</span>'
+                            }
+                        </span>
+                        <div class="progress-text">
+                            <span class="progress-title">Complete</span>
+                            <span class="progress-subtitle">Ready to code</span>
+                        </div>
+                    </div>
+                </li>
+            </ol>
+        </nav>
         
         <div class="wizard-content">
             ${this.getStepContent(config)}
         </div>
         
+        ${this.currentStep < 2 ? `
         <div class="wizard-footer">
             <button class="btn btn-secondary" onclick="previousStep()" ${this.currentStep === 0 ? 'disabled' : ''}>
                 ← Back
@@ -615,6 +854,7 @@ export class ModernSetupWizard {
                 Next →
             </button>
         </div>
+        ` : ''}
     </div>
 
     <script>
@@ -685,6 +925,8 @@ export class ModernSetupWizard {
 </html>`;
     }
 
+    private currentWebview: vscode.Webview | null = null;
+
     private getStepContent(config: vscode.WorkspaceConfiguration): string {
         switch (this.currentStep) {
             case 0:
@@ -699,6 +941,8 @@ export class ModernSetupWizard {
     }
 
     private getProviderSelectionStep(): string {
+        const config = vscode.workspace.getConfiguration('xendcode');
+        
         return `
             <h2>Choose Your AI Providers</h2>
             <p class="subtitle">
@@ -706,23 +950,25 @@ export class ModernSetupWizard {
             </p>
             
             <div class="provider-list">
-                ${this.providers.map(provider => `
-                    <div class="provider-card" data-provider="${provider.id}" onclick="selectProvider('${provider.id}')">
-                        <div class="provider-icon">${provider.icon}</div>
+                ${this.providers.map(provider => {
+                    const apiKey = config.get<string>(`models.${provider.id}.apiKey`, '');
+                    const isConnected = apiKey && apiKey.length > 0;
+                    
+                    return `
+                    <div class="provider-card ${isConnected ? 'connected' : ''}" data-provider="${provider.id}" onclick="${isConnected ? '' : `selectProvider('${provider.id}')`}">
+                        <div class="provider-icon">
+                            <img src="${this.currentWebview ? this.getLogoUri(this.currentWebview, provider.icon) : ''}" alt="${provider.name}" width="40" height="40" />
+                        </div>
                         <div class="provider-info">
                             <div class="provider-name">${provider.name}</div>
-                            <div class="provider-description">
-                                ${provider.id === 'gemini' ? '60 req/min • 1M context • Best for everything' : ''}
-                                ${provider.id === 'groq' ? '30 req/min • Fast inference • Quick responses' : ''}
-                                ${provider.id === 'openai' ? 'GPT-3.5 Turbo • High quality responses' : ''}
-                                ${provider.id === 'cohere' ? 'Trial API • Good for documentation' : ''}
-                            </div>
+                            <div class="provider-description">${provider.description}</div>
                         </div>
-                        <span class="provider-badge ${provider.id === 'openai' ? 'badge-credit' : 'badge-free'}">
-                            ${provider.id === 'openai' ? '$5 Credit' : 'FREE'}
+                        <span class="provider-badge ${isConnected ? 'badge-connected' : (provider.freeTier ? 'badge-free' : 'badge-credit')}">
+                            ${isConnected ? 'CONNECTED' : (provider.freeCredit || (provider.freeTier ? 'FREE' : ''))}
                         </span>
                     </div>
-                `).join('')}
+                `;
+                }).join('')}
             </div>
         `;
     }
@@ -791,27 +1037,86 @@ export class ModernSetupWizard {
         );
 
         return `
-            <div style="text-align: center; padding: 40px;">
-                <div style="font-size: 72px; margin-bottom: 24px;">🎉</div>
-                <h2>Setup Complete!</h2>
-                <p style="color: #6c757d; margin: 16px 0;">
-                    You've configured ${configured.length} AI provider${configured.length !== 1 ? 's' : ''}.
-                </p>
-                
-                <div style="background: #f8f9fa; border-radius: 12px; padding: 24px; margin: 24px 0;">
-                    <h3>Configured Providers:</h3>
-                    <div style="margin-top: 16px;">
+            <div style="max-width: 700px; margin: 0 auto; padding: 40px 20px;">
+                <!-- Success Header -->
+                <div style="text-align: center; margin-bottom: 48px;">
+                    <div style="font-size: 80px; margin-bottom: 16px; animation: bounce 0.6s ease;">🎉</div>
+                    <h1 style="font-size: 32px; font-weight: 700; margin-bottom: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                        You're All Set!
+                    </h1>
+                    <p style="font-size: 16px; color: var(--vscode-descriptionForeground); margin: 0;">
+                        Successfully configured ${configured.length} AI provider${configured.length !== 1 ? 's' : ''} for intelligent coding assistance
+                    </p>
+                </div>
+
+                <!-- Stats Cards -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 40px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; padding: 24px; text-align: center; color: white;">
+                        <div style="font-size: 36px; font-weight: 700; margin-bottom: 4px;">${configured.length}</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Active Providers</div>
+                    </div>
+                    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 16px; padding: 24px; text-align: center; color: white;">
+                        <div style="font-size: 36px; font-weight: 700; margin-bottom: 4px;">∞</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Free Tokens</div>
+                    </div>
+                    <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 16px; padding: 24px; text-align: center; color: white;">
+                        <div style="font-size: 36px; font-weight: 700; margin-bottom: 4px;">🚀</div>
+                        <div style="font-size: 14px; opacity: 0.9;">Ready to Code</div>
+                    </div>
+                </div>
+
+                <!-- Configured Providers List -->
+                <div style="background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 16px; padding: 32px; margin-bottom: 32px;">
+                    <h3 style="font-size: 18px; font-weight: 600; margin: 0 0 24px 0; display: flex; align-items: center; gap: 8px;">
+                        <span>✓</span> Configured Providers
+                    </h3>
+                    <div style="display: grid; gap: 12px;">
                         ${configured.map(p => `
-                            <div style="padding: 8px; margin: 4px 0;">
-                                ${p.icon} ${p.name} ✅
+                            <div style="display: flex; align-items: center; gap: 16px; padding: 16px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 12px; transition: transform 0.2s;">
+                                <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: ${p.color}15; border-radius: 10px;">
+                                    <img src="${this.currentWebview ? this.getLogoUri(this.currentWebview, p.icon) : ''}" alt="${p.name}" style="width: 32px; height: 32px;" />
+                                </div>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${p.name}</div>
+                                    <div style="font-size: 13px; color: var(--vscode-descriptionForeground);">${p.description}</div>
+                                </div>
+                                <div style="width: 32px; height: 32px; background: #10b98115; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                        <path d="M13.5 4L6 11.5L2.5 8" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
                 </div>
-                
-                <button class="btn btn-primary" onclick="vscode.postMessage({ type: 'complete' })" style="margin-top: 24px;">
-                    Start Using XendCode →
-                </button>
+
+                <!-- CTA Button -->
+                <div style="text-align: center;">
+                    <button class="btn btn-primary" onclick="vscode.postMessage({ type: 'complete' })" style="
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        border: none;
+                        color: white;
+                        font-size: 16px;
+                        font-weight: 600;
+                        padding: 16px 48px;
+                        border-radius: 12px;
+                        cursor: pointer;
+                        transition: all 0.3s;
+                        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                    " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(102, 126, 234, 0.5)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.4)'">
+                        Start Using XendCode →
+                    </button>
+                    <p style="margin-top: 16px; font-size: 13px; color: var(--vscode-descriptionForeground);">
+                        Press <kbd style="padding: 2px 6px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; font-family: monospace;">Ctrl+Cmd+L</kbd> to open chat anytime
+                    </p>
+                </div>
+
+                <style>
+                    @keyframes bounce {
+                        0%, 100% { transform: translateY(0); }
+                        50% { transform: translateY(-20px); }
+                    }
+                </style>
             </div>
         `;
     }

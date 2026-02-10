@@ -32,11 +32,25 @@ export interface IModelProvider {
         messages: ChatMessage[],
         options?: CompletionOptions
     ): Promise<CompletionResponse>;
+    
+    // Stream support (optional)
+    completeStream?(
+        messages: ChatMessage[],
+        options?: CompletionOptions,
+        onChunk?: (chunk: string) => void
+    ): Promise<CompletionResponse>;
+}
+
+export interface ImageAttachment {
+    name: string;
+    type: string;
+    data: string; // Base64 data URL
 }
 
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
     content: string;
+    images?: ImageAttachment[]; // Optional image attachments for vision models
 }
 
 export interface CompletionOptions {

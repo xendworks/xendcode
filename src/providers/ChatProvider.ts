@@ -2,10 +2,11 @@ import * as vscode from 'vscode';
 import { ModelManager } from '../core/ModelManager';
 import { ContextManager } from '../core/ContextManager';
 import { TokenManager } from '../core/TokenManager';
+import { FirebaseService } from '../services/FirebaseService';
 import { ChatMessage } from '../types';
 
-export class ChatProvider implements vscode.WebviewViewProvider {
-    private view?: vscode.WebviewView;
+export class ChatProvider {
+    private panel?: vscode.WebviewPanel;
     private webview?: vscode.Webview;
     private chatHistory: ChatMessage[] = [];
 
@@ -13,24 +14,41 @@ export class ChatProvider implements vscode.WebviewViewProvider {
         private context: vscode.ExtensionContext,
         private modelManager: ModelManager,
         private contextManager: ContextManager,
-        private tokenManager: TokenManager
+        private tokenManager: TokenManager,
+        private firebaseService: FirebaseService
     ) {}
 
-    resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
-        token: vscode.CancellationToken
-    ) {
-        this.view = webviewView;
-        this.webview = webviewView.webview;
+    /**
+     * Open chat as editor panel on the right side
+     */
+    public openChatEditor() {
+        // If panel already exists, just reveal it
+        if (this.panel) {
+            this.panel.reveal(vscode.ViewColumn.Beside);
+            return;
+        }
 
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this.context.extensionUri]
-        };
+        // Create new panel in editor area (right side)
+        this.panel = vscode.window.createWebviewPanel(
+            'xendcodeChat',
+            'XendCode Chat',
+            vscode.ViewColumn.Beside,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [this.context.extensionUri]
+            }
+        );
 
-        webviewView.webview.html = this.getHtmlContent(webviewView.webview);
-        this.setupWebviewMessageHandling(webviewView.webview);
+        this.webview = this.panel.webview;
+        this.panel.webview.html = this.getHtmlContent(this.panel.webview);
+        this.setupWebviewMessageHandling(this.panel.webview);
+
+        // Handle panel disposal
+        this.panel.onDidDispose(() => {
+            this.panel = undefined;
+            this.webview = undefined;
+        });
     }
 
     setupWebviewMessageHandling(webview: vscode.Webview) {
@@ -38,7 +56,7 @@ export class ChatProvider implements vscode.WebviewViewProvider {
         webview.onDidReceiveMessage(async (message) => {
             switch (message.type) {
                 case 'chat':
-                    await this.handleChat(message.text, message.selection);
+                    await this.handleChat(message.text, message.references, message.images, message.preferredModel);
                     break;
                 case 'getSelection':
                     // Send current selection to webview
@@ -61,6 +79,17 @@ export class ChatProvider implements vscode.WebviewViewProvider {
                         });
                     }
                     break;
+                case 'getAvailableModels':
+                    // Send available models to webview
+                    const models = this.modelManager.getProviders().map(p => ({
+                        name: p.getName(),
+                        isFree: p.hasFreeTierAvailable()
+                    }));
+                    this.sendMessageToWebview({
+                        type: 'availableModels',
+                        models
+                    });
+                    break;
                 case 'clear':
                     this.chatHistory = [];
                     this.sendMessageToWebview({ type: 'clear' });
@@ -77,10 +106,37 @@ export class ChatProvider implements vscode.WebviewViewProvider {
      */
     private async handleApplyCode(code: string, filePath?: string) {
         try {
-            const editor = vscode.window.activeTextEditor;
+            let editor = vscode.window.activeTextEditor;
             
-            if (!editor) {
-                throw new Error('No file open to apply changes to. Please open the target file first.');
+            // If no active editor or wrong file, try to open the target file
+            if (!editor || (filePath && editor.document.uri.fsPath !== filePath)) {
+                if (filePath) {
+                    console.log('Opening target file:', filePath);
+                    try {
+                        // Try to find if document is already open
+                        const targetDoc = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === filePath);
+                        if (targetDoc) {
+                            console.log('Found open document, switching to it');
+                            editor = await vscode.window.showTextDocument(targetDoc, {
+                                viewColumn: vscode.ViewColumn.One,
+                                preserveFocus: false,
+                                preview: false
+                            });
+                        } else {
+                            console.log('Opening new document');
+                            const doc = await vscode.workspace.openTextDocument(filePath);
+                            editor = await vscode.window.showTextDocument(doc, {
+                                viewColumn: vscode.ViewColumn.One,
+                                preserveFocus: false,
+                                preview: false
+                            });
+                        }
+                    } catch (openError: any) {
+                        throw new Error(`Could not open file: ${filePath}. ${openError.message}`);
+                    }
+                } else {
+                    throw new Error('No file open and no target file specified. Please select code in a file before asking for changes.');
+                }
             }
             
             console.log('=== APPLY CODE DEBUG ===');
@@ -88,31 +144,8 @@ export class ChatProvider implements vscode.WebviewViewProvider {
             console.log('Active editor:', editor.document.uri.fsPath);
             console.log('Code length:', code.length);
             
-            // Check if the active editor is the right file
-            if (filePath && editor.document.uri.fsPath !== filePath) {
-                console.log('File mismatch, looking for open document...');
-                
-                // Find if the file is already open in another editor
-                const targetDoc = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === filePath);
-                if (targetDoc) {
-                    console.log('Found open document, switching to it');
-                    // Switch to that editor without opening new tab
-                    const targetEditor = await vscode.window.showTextDocument(targetDoc, {
-                        viewColumn: editor.viewColumn,
-                        preserveFocus: false,
-                        preview: false
-                    });
-                    await this.replaceEditorContent(targetEditor, code);
-                } else {
-                    console.log('Document not open, applying to current editor');
-                    // File not open, use current editor anyway (user likely wants to apply here)
-                    await this.replaceEditorContent(editor, code);
-                }
-            } else {
-                console.log('Applying to current editor');
-                // Apply to current editor directly
-                await this.replaceEditorContent(editor, code);
-            }
+            // Apply the code
+            await this.replaceEditorContent(editor, code);
 
             this.sendMessageToWebview({
                 type: 'codeApplied',
@@ -361,45 +394,46 @@ export class ChatProvider implements vscode.WebviewViewProvider {
         return this.getHtmlContent(webview);
     }
 
-    private async handleChat(userMessage: string, providedSelection?: any) {
-        if (!userMessage.trim()) {
+    private async handleChat(userMessage: string, references?: any[], images?: any[], preferredModel?: string) {
+        if (!userMessage.trim() && (!images || images.length === 0)) {
             return;
         }
 
-        // Capture current selection info (can be provided from webview or fetched from editor)
-        const editor = vscode.window.activeTextEditor;
-        let selectionInfo = providedSelection;
+        // Build context from all attached references
+        let allReferencesContext = '';
         
-        if (!selectionInfo && editor && !editor.selection.isEmpty) {
-            const selection = editor.selection;
-            const fileName = editor.document.fileName.split('/').pop() || 'unknown';
-            const startLine = selection.start.line + 1;
-            const endLine = selection.end.line + 1;
-            
-            selectionInfo = {
-                fileName,
-                startLine,
-                endLine,
-                code: editor.document.getText(selection),
-                fullPath: editor.document.fileName
-            };
+        if (references && references.length > 0) {
+            for (const ref of references) {
+                const lineRange = ref.startLine === ref.endLine 
+                    ? `Line ${ref.startLine}`
+                    : `Lines ${ref.startLine}-${ref.endLine}`;
+                
+                allReferencesContext += `\n\n=== CODE REFERENCE: ${ref.fileName} (${lineRange}) ===\n\`\`\`\n${ref.code}\n\`\`\`\n`;
+            }
+        }
+
+        // Prepare image context for display
+        let imageContext = '';
+        if (images && images.length > 0) {
+            imageContext = `\n\n=== ATTACHED IMAGES ===\n${images.map(img => `- ${img.name}`).join('\n')}\n`;
         }
 
         // Parse @-mentions from message
         const { cleanMessage, referencedFiles } = await this.parseReferences(userMessage);
 
-        // Add user message to history
+        // Add user message to history (with images if present)
         this.chatHistory.push({
             role: 'user',
-            content: cleanMessage
+            content: cleanMessage,
+            images: images && images.length > 0 ? images : undefined
         });
 
-        // Show user message in UI with references and selection
+        // Show user message in UI with all references and images
         this.sendMessageToWebview({
             type: 'userMessage',
             text: cleanMessage,
-            references: referencedFiles,
-            selection: selectionInfo
+            references: references,
+            images: images && images.length > 0 ? images : undefined
         });
 
         // Show thinking indicator
@@ -410,21 +444,11 @@ export class ChatProvider implements vscode.WebviewViewProvider {
             const taskType = this.determineTaskType(cleanMessage);
 
             // Build context (includes active file, selection, etc.)
-            const tokenBudget = 8000; // Increased budget for referenced files
+            const tokenBudget = 8000;
             const { context, tokensUsed, summary } = await this.contextManager.buildContext(
                 cleanMessage,
                 tokenBudget
             );
-
-            // Add SELECTED CODE to context (CRITICAL!)
-            let selectionContext = '';
-            if (selectionInfo && selectionInfo.code) {
-                const lineRange = selectionInfo.startLine === selectionInfo.endLine 
-                    ? `Line ${selectionInfo.startLine}`
-                    : `Lines ${selectionInfo.startLine}-${selectionInfo.endLine}`;
-                
-                selectionContext = `\n\n=== SELECTED CODE: ${selectionInfo.fileName} (${lineRange}) ===\n\`\`\`\n${selectionInfo.code}\n\`\`\`\n`;
-            }
 
             // Add referenced files to context
             let fileContext = '';
@@ -440,35 +464,99 @@ export class ChatProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            const fullContext = selectionContext + context + fileContext;
-
-            // Select best model
-            const config = vscode.workspace.getConfiguration('xendcode');
-            const preferFree = config.get('routing.preferFreeTier', true);
+            const fullContext = allReferencesContext + context + fileContext;
             
-            const model = await this.modelManager.selectModel(
-                taskType,
-                tokensUsed,
-                preferFree
-            );
+            // Add image context as text description
+            const contextWithImages = fullContext + (images && images.length > 0 
+                ? `\n\n=== USER PROVIDED IMAGES ===\nThe user has attached ${images.length} image(s). Please analyze them and respond to their question about the images.\n`
+                : '');
 
-            if (!model) {
-                throw new Error('No available model found. Please configure API keys.');
+            // Select model (use preferred if provided, otherwise auto-select)
+            let model;
+            
+            if (preferredModel) {
+                console.log('User selected model:', preferredModel);
+                console.log('Available providers:', Array.from(this.modelManager.getProviders().map(p => p.getName())));
+                
+                // User manually selected a model
+                model = this.modelManager.getProvider(preferredModel);
+                
+                if (!model) {
+                    const availableNames = this.modelManager.getProviders().map(p => p.getName()).join(', ');
+                    const errorMsg = `Model "${preferredModel}" not available. Available models: ${availableNames}`;
+                    console.error(errorMsg);
+                    
+                    this.sendMessageToWebview({
+                        type: 'error',
+                        text: errorMsg
+                    });
+                    
+                    throw new Error(errorMsg);
+                }
+                
+                console.log('Using manually selected model:', model.getName());
+            } else {
+                // Auto-select best model
+                const config = vscode.workspace.getConfiguration('xendcode');
+                const preferFree = config.get('routing.preferFreeTier', true);
+                
+                model = await this.modelManager.selectModel(
+                    taskType,
+                    tokensUsed,
+                    preferFree
+                );
+
+                if (!model) {
+                    throw new Error('No available model found. Please configure API keys.');
+                }
+                
+                console.log('Auto-selected model:', model.getName());
             }
 
             // Get available models info for the AI to reference
             const availableModels = this.getAvailableModelsInfo();
 
+            // Check for org playbook
+            const orgConfig = vscode.workspace.getConfiguration('xendcode');
+            const orgId = orgConfig.get('org.id', '');
+            let orgPlaybookPrompt = '';
+            
+            if (orgId && this.firebaseService.isLoggedIn()) {
+                try {
+                    const playbookPrompt = await this.firebaseService.getActivePlaybookPrompt(orgId);
+                    if (playbookPrompt) {
+                        orgPlaybookPrompt = `\n\n## ORGANIZATION PLAYBOOK\n${playbookPrompt}\n`;
+                    }
+                } catch (error) {
+                    console.error('Failed to load org playbook:', error);
+                }
+            }
+
             // Agent-mode system prompt (inspired by Cursor's advanced prompt architecture)
             const systemPrompt = fullContext 
-                ? `You are an autonomous AI coding agent in VS Code. Your goal is to COMPLETELY resolve the user's query before responding.
+                ? `You are an AI coding agent in VS Code with AUTOMATIC CODE APPLICATION.
 
-## YOUR CORE BEHAVIOR
-You are integrated into a VS Code extension that can AUTOMATICALLY APPLY code changes to files with a single click.
-This means:
-- When user asks to CHANGE/FIX/ADD code → Provide complete, executable code that will be applied to their file
-- When user asks to EXPLAIN/UNDERSTAND code → Provide clear explanations WITHOUT complete code blocks
-- BE PRECISE about which mode you're in based on the user's request
+## PRIMARY TASK: IDENTIFY USER INTENT CORRECTLY
+
+CRITICAL: Distinguish between EXPLANATION vs CODE CHANGE requests!
+
+**EXPLANATION MODE** (User wants to UNDERSTAND - NO code blocks):
+Keywords: "why", "what", "how", "explain", "tell me", "what does X do", "why is X needed", "how does X work"
+Response: Explain in text, use inline code like \`method()\`, NO complete functions, NO apply button
+
+Example:
+Q: "why is this method needed?"
+A: "The \`initializeProviders()\` method sets up AI service connections at startup. It reads API keys from settings and creates provider instances (OpenAI, Gemini, etc.). Without it, no models would be available."
+
+**CODE CHANGE MODE** (User wants to MODIFY - Show complete code):
+Keywords: "fix", "add", "update", "change", "improve", "create", "implement"
+Response: Provide ONE complete code block, full function implementation, apply button shows
+
+Example:
+Q: "add error handling"
+A: "Added try-catch: \`\`\`typescript\nfunction example() { try { ... } catch { ... } }\n\`\`\`"
+
+**IF UNCLEAR:** Ask "Would you like me to: 1. Explain how this works, OR 2. Make changes to it?"
 
 ## AGENT BEHAVIOR
 - Be THOROUGH: Gather full context before making changes
@@ -483,7 +571,7 @@ ${fullContext}
 
 ## AVAILABLE AI MODELS IN THIS PROJECT
 ${availableModels}
-
+${orgPlaybookPrompt}
 ## RESPONSE RULES
 
 ### CRITICAL: Code vs Explanation Distinction
@@ -597,8 +685,31 @@ ${availableModels}
                 ...this.chatHistory.slice(-5) // Keep last 5 messages for context
             ];
 
-            // Get completion
-            const response = await model.complete(messages);
+            // Get completion with STREAMING
+            let fullResponse = '';
+            
+            // Start streaming message in UI
+            this.sendMessageToWebview({
+                type: 'streamStart',
+                model: model.getName()
+            });
+
+            const response = await (model.completeStream ? 
+                model.completeStream(messages, undefined, (chunk: string) => {
+                    fullResponse += chunk;
+                    // Send each chunk to webview immediately
+                    this.sendMessageToWebview({
+                        type: 'streamChunk',
+                        chunk: chunk
+                    });
+                }) :
+                model.complete(messages)  // Fallback to non-streaming
+            );
+
+            // Ensure we have the full content
+            if (model.completeStream) {
+                response.content = fullResponse;
+            }
 
             // Record usage
             await this.tokenManager.recordUsage(
@@ -613,6 +724,13 @@ ${availableModels}
                 role: 'assistant',
                 content: response.content
             });
+
+            // Auto-save to Firebase if logged in (async, don't block UI)
+            if (this.firebaseService.isLoggedIn()) {
+                this.firebaseService.saveChatHistory(this.chatHistory).catch(err => {
+                    console.error('Failed to sync chat history:', err);
+                });
+            }
 
             // Calculate token savings vs naive approach
             const naiveTokens = (fullContext.length / 4) + (userMessage.length / 4);
@@ -663,24 +781,14 @@ ${availableModels}
             // 1. NOT an explanation/documentation task
             // 2. It's a code change task OR response indicates changes
             // 3. Has code blocks
-            // 4. Has selection context
+            // 4. Has reference context
             // 5. Response does NOT contain explanation keywords
+            const firstReference = references && references.length > 0 ? references[0] : null;
             const hasApplicableCode = !isExplanationTask &&
                                      codeBlocks.length > 0 && 
-                                     selectionInfo && 
+                                     firstReference && 
                                      (isCodeChangeTask || hasChangeKeywords) &&
                                      !hasExplanationKeywords;
-            
-            console.log('=== APPLY BUTTON DECISION ===');
-            console.log('Task type:', taskType);
-            console.log('Is explanation/doc task:', isExplanationTask);
-            console.log('Is code change task:', isCodeChangeTask);
-            console.log('Has change keywords:', hasChangeKeywords);
-            console.log('Has explanation keywords:', hasExplanationKeywords);
-            console.log('Code blocks found:', codeBlocks.length);
-            console.log('Has selection:', !!selectionInfo);
-            console.log('FINAL DECISION - Show apply button:', hasApplicableCode);
-            console.log('===========================');
 
             // Send response to UI with savings info
             this.sendMessageToWebview({
@@ -692,7 +800,7 @@ ${availableModels}
                 contextSummary: summary,
                 tokenSavings: tokenSavings > 0 ? `Saved ${tokenSavings} tokens (${savingsPercent}% reduction)` : null,
                 codeBlocks: hasApplicableCode ? codeBlocks : undefined,
-                targetFile: selectionInfo?.fullPath,
+                targetFile: firstReference?.fullPath,
                 isExplanation: isExplanationTask
             });
 
@@ -848,7 +956,7 @@ ${availableModels}
 - gemini-3-flash-preview (preview)
 - gemini-3-pro-preview (preview)
 
-**Groq Models (Free, Fast Inference):**
+**grok Models (Free, Fast Inference):**
 - llama-3.3-70b (Llama 3.3 70B)
 - llama-3.3-70b-versatile (versatile variant)
 
@@ -864,9 +972,8 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
     }
 
     private sendMessageToWebview(message: any) {
-        if (this.view) {
-            this.view.webview.postMessage(message);
-        } else if (this.webview) {
+        // Send to webview
+        if (this.webview) {
             this.webview.postMessage(message);
         }
     }
@@ -902,15 +1009,14 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         
         .message {
             margin-bottom: 16px;
-            padding: 12px;
-            border-radius: 8px;
-            max-width: 90%;
+            padding: 12px 16px;
+            border-radius: 6px;
+            width: 100%;
         }
         
         .user-message {
             background: var(--vscode-input-background);
-            border: 1px solid var(--vscode-input-border);
-            margin-left: auto;
+            border: 1px solid var(--vscode-panel-border);
         }
         
         .assistant-message {
@@ -930,10 +1036,66 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
             line-height: 1.6;
         }
         
+        .code-block-wrapper {
+            position: relative;
+            margin: 12px 0;
+        }
+
+        .code-block-wrapper:hover .code-apply-btn {
+            opacity: 1;
+        }
+
+        .code-apply-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .code-apply-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .code-apply-btn:active {
+            transform: translateY(0);
+        }
+
+        .code-apply-btn svg {
+            flex-shrink: 0;
+        }
+        
+        .code-apply-btn:disabled {
+            opacity: 1 !important;
+            cursor: not-allowed;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
         .message-selection {
             margin-bottom: 12px;
-            border-left: 3px solid var(--vscode-focusBorder);
-            padding-left: 8px;
+            background: var(--vscode-textCodeBlock-background);
+            border: 1px solid var(--vscode-panel-border);
+            padding: 8px;
+            border-radius: 4px;
         }
         
         .selection-header {
@@ -990,7 +1152,132 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
             border-top: 1px solid var(--vscode-panel-border);
             display: flex;
             flex-direction: column;
+            gap: 12px;
+        }
+
+        /* Headless UI inspired model selector */
+        .model-selector-wrapper {
+            position: relative;
+            padding: 0;
+        }
+
+        .model-selector-button {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            background: var(--vscode-input-background);
+            color: var(--vscode-foreground);
+            border: 1px solid var(--vscode-input-border);
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.15s;
+        }
+
+        .model-selector-button:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .model-selector-button:focus {
+            outline: 2px solid var(--vscode-focusBorder);
+            outline-offset: -2px;
+        }
+
+        .model-selector-button-text {
+            display: flex;
+            align-items: center;
             gap: 8px;
+        }
+
+        .model-selector-icon {
+            font-size: 16px;
+        }
+
+        .model-selector-chevron {
+            font-size: 12px;
+            opacity: 0.5;
+        }
+
+        .model-selector-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: var(--vscode-dropdown-background);
+            border: 1px solid var(--vscode-dropdown-border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            max-height: 280px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            padding: 4px;
+        }
+
+        .model-selector-dropdown.open {
+            display: block;
+            animation: dropdownFadeIn 0.15s ease-out;
+        }
+
+        @keyframes dropdownFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .model-option {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.1s;
+        }
+
+        .model-option:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .model-option.selected {
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+        }
+
+        .model-option-content {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .model-option-icon {
+            font-size: 16px;
+        }
+
+        .model-option-name {
+            font-weight: 500;
+        }
+
+        .model-option-badge {
+            font-size: 10px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 6px;
+        }
+
+        .model-option-check {
+            font-size: 16px;
+            color: var(--vscode-list-activeSelectionForeground);
         }
         
         .selection-indicator {
@@ -998,7 +1285,7 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
             align-items: center;
             justify-content: space-between;
             background: var(--vscode-inputOption-activeBackground);
-            border: 1px solid var(--vscode-focusBorder);
+            border: 1px solid var(--vscode-panel-border);
             border-radius: 6px;
             padding: 6px 10px;
             font-size: 12px;
@@ -1039,17 +1326,122 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
             width: 100%;
         }
         
-        #message-input {
-            flex: 1;
+        /* Headless UI inspired input area */
+        .input-form {
             background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border);
+            border-radius: 8px;
+            transition: all 0.15s;
+        }
+
+        .input-form:focus-within {
+            outline: 2px solid var(--vscode-focusBorder);
+            outline-offset: -2px;
+        }
+
+        .input-form.drag-over {
+            outline: 2px dashed var(--vscode-focusBorder);
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .references-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
             padding: 8px 12px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .reference-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-family: var(--vscode-editor-font-family);
+        }
+
+        .reference-badge-icon {
+            font-size: 12px;
+        }
+
+        .reference-badge-remove {
+            background: transparent;
+            border: none;
+            color: var(--vscode-badge-foreground);
+            cursor: pointer;
+            padding: 0;
+            font-size: 14px;
+            line-height: 1;
+            opacity: 0.7;
+            margin-left: 2px;
+        }
+
+        .reference-badge-remove:hover {
+            opacity: 1;
+        }
+
+        .image-preview {
+            max-width: 100%;
+            max-height: 200px;
             border-radius: 4px;
+            margin: 8px 0;
+            border: 1px solid var(--vscode-panel-border);
+        }
+
+        #message-input {
+            width: 100%;
+            background: transparent;
+            color: var(--vscode-input-foreground);
+            border: none;
+            padding: 12px 16px;
             font-family: inherit;
             font-size: 13px;
-            resize: vertical;
-            min-height: 36px;
+            resize: none;
+            min-height: 100px;
+            max-height: 400px;
+            overflow-y: auto;
+            outline: none;
+        }
+
+        #message-input::placeholder {
+            color: var(--vscode-input-placeholderForeground);
+            opacity: 0.6;
+        }
+
+        .input-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+
+        .input-toolbar-left {
+            display: flex;
+            gap: 8px;
+        }
+
+        .toolbar-button {
+            background: transparent;
+            color: var(--vscode-descriptionForeground);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+
+        .toolbar-button:hover {
+            background: var(--vscode-list-hoverBackground);
+            color: var(--vscode-foreground);
         }
         
         button {
@@ -1065,22 +1457,33 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         }
         
         .send-btn {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
             display: flex;
             align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            transition: transform 0.2s;
+            gap: 6px;
+            transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
         }
         
         .send-btn:hover {
-            transform: scale(1.1);
+            background: var(--vscode-button-hoverBackground);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .send-btn:active {
-            transform: scale(0.95);
+            transform: scale(0.98);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         
         code {
@@ -1139,14 +1542,55 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         </div>
     </div>
     <div id="input-container">
-        <!-- Selection indicator will be inserted here dynamically -->
-        <div class="input-row">
-            <textarea id="message-input" placeholder="Ask me anything..." rows="1"></textarea>
-            <button class="send-btn" onclick="sendMessage()" title="Send message">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M1 8l14-6-4 12-4-6-6 0z"/>
-                </svg>
+        <!-- Model Selector (Headless UI style) -->
+        <div class="model-selector-wrapper">
+            <button id="model-selector-button" class="model-selector-button" onclick="toggleModelDropdown()">
+                <span class="model-selector-button-text">
+                    <span class="model-selector-icon" id="selected-model-icon">🤖</span>
+                    <span id="selected-model-name">Auto (Smart Routing)</span>
+                </span>
+                <span class="model-selector-chevron">▼</span>
             </button>
+            <div id="model-dropdown" class="model-selector-dropdown">
+                <!-- Options populated by JS -->
+            </div>
+        </div>
+
+        <!-- Selection indicator will be inserted here dynamically -->
+        
+        <!-- Chat Input (Headless UI style with drag-drop) -->
+        <div id="input-form" class="input-form">
+            <!-- Hidden file input for images -->
+            <input type="file" id="file-input" accept="image/*" multiple style="display: none;" />
+            
+            <!-- References badges -->
+            <div id="references-container" class="references-container" style="display: none;"></div>
+            
+            <textarea id="message-input" placeholder="Ask me anything... (Drag & drop images here)"></textarea>
+            
+            <div class="input-toolbar">
+                <div class="input-toolbar-left">
+                    <button type="button" class="toolbar-button" onclick="attachContext()" title="Attach code selection">
+                        <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M15.621 4.379a3 3 0 00-4.242 0l-7 7a3 3 0 004.241 4.243h.001l.497-.5a.75.75 0 011.064 1.057l-.498.501-.002.002a4.5 4.5 0 01-6.364-6.364l7-7a4.5 4.5 0 016.368 6.36l-3.455 3.553A2.625 2.625 0 119.52 9.52l3.45-3.451a.75.75 0 111.061 1.06l-3.45 3.451a1.125 1.125 0 001.587 1.595l3.454-3.553a3 3 0 000-4.242z" clip-rule="evenodd" />
+                        </svg>
+                        <span>Code</span>
+                    </button>
+                    <button type="button" class="toolbar-button" onclick="attachImage()" title="Attach image">
+                        <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-3.97 3.97-1.47-1.47a.75.75 0 00-1.06 0l-3.22 3.22zm5.25-5.56a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" clip-rule="evenodd" />
+                        </svg>
+                        <span>Image</span>
+                    </button>
+                </div>
+                
+                <button class="send-btn" onclick="sendMessage()" title="Send message (Enter)">
+                    <span>Send</span>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M1 8l14-6-4 12-4-6-6 0z"/>
+                    </svg>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1154,7 +1598,16 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         const vscode = acquireVsCodeApi();
         const chatContainer = document.getElementById('chat-container');
         const messageInput = document.getElementById('message-input');
+        const modelDropdown = document.getElementById('model-dropdown');
+        const modelButton = document.getElementById('model-selector-button');
+        const inputForm = document.getElementById('input-form');
+        const referencesContainer = document.getElementById('references-container');
+        const fileInput = document.getElementById('file-input');
         let currentSelection = null;
+        let availableModels = [];
+        let selectedModel = { value: 'auto', name: 'Auto (Smart Routing)', icon: '🤖' };
+        let attachedReferences = []; // Multiple references support
+        let attachedImages = []; // Image attachments
 
         // Enter key handler - MUST WORK
         messageInput.onkeydown = function(e) {
@@ -1173,19 +1626,25 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         // Load handler
         setTimeout(function() {
             vscode.postMessage({ type: 'getSelection' });
+            vscode.postMessage({ type: 'getAvailableModels' });
         }, 100);
 
         // Send message function
         function sendMessage() {
             const text = messageInput.value.trim();
-            if (text) {
+            if (text || attachedImages.length > 0) {
                 vscode.postMessage({ 
                     type: 'chat', 
                     text: text,
-                    selection: currentSelection 
+                    references: attachedReferences,
+                    images: attachedImages,
+                    preferredModel: selectedModel.value === 'auto' ? null : selectedModel.value
                 });
                 messageInput.value = '';
+                attachedReferences = [];
+                attachedImages = [];
                 currentSelection = null;
+                updateReferences();
                 updateSelectionIndicator();
             }
         }
@@ -1205,7 +1664,19 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
                     ? ':' + currentSelection.startLine
                     : ':' + currentSelection.startLine + '-' + currentSelection.endLine;
                 
-                indicator.innerHTML = '<span class="indicator-text">📎 @' + currentSelection.fileName + lineRange + '</span><button class="indicator-close" onclick="clearSelection()" title="Remove">×</button>';
+                // Safe DOM manipulation instead of innerHTML
+                const textSpan = document.createElement('span');
+                textSpan.className = 'indicator-text';
+                textSpan.textContent = '📎 @' + currentSelection.fileName + lineRange;
+                
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'indicator-close';
+                closeBtn.title = 'Remove';
+                closeBtn.textContent = '×';
+                closeBtn.onclick = clearSelection;
+                
+                indicator.appendChild(textSpan);
+                indicator.appendChild(closeBtn);
                 
                 const inputContainer = document.getElementById('input-container');
                 inputContainer.insertBefore(indicator, inputContainer.firstChild);
@@ -1218,18 +1689,307 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
         }
         window.clearSelection = clearSelection;
 
+        function toggleModelDropdown() {
+            modelDropdown.classList.toggle('open');
+        }
+        window.toggleModelDropdown = toggleModelDropdown;
+
+        function closeModelDropdown() {
+            modelDropdown.classList.remove('open');
+        }
+
+        function selectModel(model) {
+            selectedModel = model;
+            document.getElementById('selected-model-name').textContent = model.name;
+            document.getElementById('selected-model-icon').textContent = model.icon;
+            closeModelDropdown();
+        }
+        window.selectModel = selectModel;
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!modelButton.contains(e.target) && !modelDropdown.contains(e.target)) {
+                closeModelDropdown();
+            }
+        });
+
+        function updateModelSelector() {
+            // Clear dropdown
+            modelDropdown.innerHTML = '';
+            
+            // Add "Auto" option
+            const autoOption = createModelOption({
+                value: 'auto',
+                name: 'Auto (Smart Routing)',
+                icon: '🤖',
+                isFree: true
+            }, true);
+            modelDropdown.appendChild(autoOption);
+            
+            // Add available models
+            availableModels.forEach(function(model) {
+                // Add icon based on provider
+                let icon = '🤖';
+                if (model.name.includes('Gemini')) icon = '✨';
+                else if (model.name.includes('GPT')) icon = '🧠';
+                else if (model.name.includes('Claude')) icon = '🎭';
+                else if (model.name.includes('Llama')) icon = '🦙';
+                else if (model.name.includes('DeepSeek')) icon = '🔍';
+                else if (model.name.includes('Cohere')) icon = '💬';
+                
+                const option = createModelOption({
+                    value: model.name,
+                    name: model.name,
+                    icon: icon,
+                    isFree: model.isFree
+                }, false);
+                
+                modelDropdown.appendChild(option);
+            });
+        }
+
+        function createModelOption(model, isSelected) {
+            const div = document.createElement('div');
+            div.className = 'model-option' + (isSelected ? ' selected' : '');
+            div.onclick = function() { selectModel(model); };
+            
+            const content = document.createElement('div');
+            content.className = 'model-option-content';
+            
+            const icon = document.createElement('span');
+            icon.className = 'model-option-icon';
+            icon.textContent = model.icon;
+            
+            const name = document.createElement('span');
+            name.className = 'model-option-name';
+            name.textContent = model.name;
+            
+            content.appendChild(icon);
+            content.appendChild(name);
+            
+            if (model.isFree) {
+                const badge = document.createElement('span');
+                badge.className = 'model-option-badge';
+                badge.textContent = 'FREE';
+                content.appendChild(badge);
+            }
+            
+            div.appendChild(content);
+            
+            if (isSelected) {
+                const check = document.createElement('span');
+                check.className = 'model-option-check';
+                check.textContent = '✓';
+                div.appendChild(check);
+            }
+            
+            return div;
+        }
+
+        function attachContext() {
+            vscode.postMessage({ type: 'getSelection' });
+        }
+        window.attachContext = attachContext;
+
+        function attachImage() {
+            fileInput.click();
+        }
+        window.attachImage = attachImage;
+
+        // Handle file input change
+        fileInput.addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            attachedImages.push({
+                                name: file.name,
+                                type: file.type,
+                                data: event.target.result
+                            });
+                            updateReferences();
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                }
+            }
+            // Reset input so same file can be selected again
+            fileInput.value = '';
+        });
+
+        function updateReferences() {
+            if (attachedReferences.length === 0 && attachedImages.length === 0) {
+                referencesContainer.style.display = 'none';
+                return;
+            }
+
+            referencesContainer.style.display = 'flex';
+            referencesContainer.innerHTML = '';
+
+            // Show code references
+            attachedReferences.forEach(function(ref, index) {
+                const badge = document.createElement('div');
+                badge.className = 'reference-badge';
+
+                const icon = document.createElement('span');
+                icon.className = 'reference-badge-icon';
+                icon.textContent = '📎';
+
+                const text = document.createElement('span');
+                const lineRange = ref.startLine === ref.endLine 
+                    ? ':' + ref.startLine 
+                    : ':' + ref.startLine + '-' + ref.endLine;
+                text.textContent = ref.fileName + lineRange;
+
+                const remove = document.createElement('button');
+                remove.className = 'reference-badge-remove';
+                remove.textContent = '×';
+                remove.onclick = function() { removeReference(index); };
+
+                badge.appendChild(icon);
+                badge.appendChild(text);
+                badge.appendChild(remove);
+                referencesContainer.appendChild(badge);
+            });
+
+            // Show image references
+            attachedImages.forEach(function(img, index) {
+                const badge = document.createElement('div');
+                badge.className = 'reference-badge';
+
+                const icon = document.createElement('span');
+                icon.className = 'reference-badge-icon';
+                icon.textContent = '🖼️';
+
+                const text = document.createElement('span');
+                text.textContent = img.name;
+
+                const remove = document.createElement('button');
+                remove.className = 'reference-badge-remove';
+                remove.textContent = '×';
+                remove.onclick = function() { removeImage(index); };
+
+                badge.appendChild(icon);
+                badge.appendChild(text);
+                badge.appendChild(remove);
+                referencesContainer.appendChild(badge);
+            });
+        }
+
+        function removeReference(index) {
+            attachedReferences.splice(index, 1);
+            updateReferences();
+        }
+
+        function removeImage(index) {
+            attachedImages.splice(index, 1);
+            updateReferences();
+        }
+
+        // Drag and drop handlers - must prevent default on dragover
+        inputForm.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            inputForm.classList.add('drag-over');
+        });
+
+        inputForm.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            inputForm.classList.add('drag-over');
+        });
+
+        inputForm.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Only remove if leaving the form, not child elements
+            if (e.target === inputForm) {
+                inputForm.classList.remove('drag-over');
+            }
+        });
+
+        inputForm.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            inputForm.classList.remove('drag-over');
+
+            const files = e.dataTransfer.files;
+            console.log('Dropped files:', files.length);
+            
+            if (files && files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    console.log('Processing file:', file.name, file.type);
+                    
+                    // Check if it's an image
+                    if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            console.log('Image loaded:', file.name);
+                            attachedImages.push({
+                                name: file.name,
+                                type: file.type,
+                                data: event.target.result
+                            });
+                            updateReferences();
+                        };
+                        reader.onerror = function(error) {
+                            console.error('Error reading file:', error);
+                        };
+                        reader.readAsDataURL(file);
+                    } else {
+                        console.log('Not an image, skipped:', file.type);
+                    }
+                }
+            }
+        });
+
         // Message handler
+        let streamingMessage = null;
+        let streamingContent = '';
+
         window.addEventListener('message', function(event) {
             const msg = event.data;
             
-            if (msg.type === 'selectionInfo') {
-                currentSelection = msg.selection;
-                updateSelectionIndicator();
+            if (msg.type === 'availableModels') {
+                availableModels = msg.models;
+                updateModelSelector();
+            } else if (msg.type === 'selectionInfo') {
+                // Add to references list instead of overwriting
+                if (msg.selection) {
+                    attachedReferences.push({
+                        type: 'code',
+                        fileName: msg.selection.fileName,
+                        startLine: msg.selection.startLine,
+                        endLine: msg.selection.endLine,
+                        code: msg.selection.code,
+                        fullPath: msg.selection.fullPath
+                    });
+                    updateReferences();
+                }
             } else if (msg.type === 'userMessage') {
-                addMessage('user', msg.text, null, null, null, msg.references, null, msg.selection, null, null);
+                addMessage('user', msg.text, null, null, null, msg.references, null, msg.selection, null, null, msg.images);
+            } else if (msg.type === 'streamStart') {
+                removeThinking();
+                streamingContent = '';
+                streamingMessage = startStreamingMessage(msg.model);
+            } else if (msg.type === 'streamChunk') {
+                if (streamingMessage) {
+                    streamingContent += msg.chunk;
+                    updateStreamingMessage(streamingMessage, streamingContent);
+                }
             } else if (msg.type === 'assistantMessage') {
                 removeThinking();
-                addMessage('assistant', msg.text, msg.model, msg.tokens, msg.cost, null, msg.contextSummary, null, msg.codeBlocks, msg.targetFile);
+                if (streamingMessage) {
+                    finalizeStreamingMessage(streamingMessage, msg);
+                    streamingMessage = null;
+                    streamingContent = '';
+                } else {
+                    addMessage('assistant', msg.text, msg.model, msg.tokens, msg.cost, null, msg.contextSummary, null, msg.codeBlocks, msg.targetFile);
+                }
             } else if (msg.type === 'codeApplied') {
                 showNotification(msg.message, 'success');
             } else if (msg.type === 'thinking') {
@@ -1238,41 +1998,208 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
                 removeThinking();
                 addError(msg.text);
             } else if (msg.type === 'clear') {
-                chatContainer.innerHTML = '';
+                while (chatContainer.firstChild) {
+                    chatContainer.removeChild(chatContainer.firstChild);
+                }
             }
         });
 
-        function addMessage(role, content, model, tokens, cost, references, contextSummary, selection, codeBlocks, targetFile) {
+        function startStreamingMessage(model) {
+            const div = document.createElement('div');
+            div.className = 'message assistant-message';
+            div.dataset.streaming = 'true';
+            
+            const header = document.createElement('div');
+            header.className = 'message-header';
+            const modelSpan = document.createElement('span');
+            modelSpan.textContent = model;
+            header.appendChild(modelSpan);
+            div.appendChild(header);
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.dataset.role = 'streaming-content';
+            div.appendChild(contentDiv);
+            
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            return div;
+        }
+
+        function updateStreamingMessage(messageDiv, content) {
+            const contentDiv = messageDiv.querySelector('[data-role="streaming-content"]');
+            if (contentDiv) {
+                contentDiv.innerHTML = formatContent(content);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        }
+
+        function finalizeStreamingMessage(messageDiv, msgData) {
+            messageDiv.dataset.streaming = 'false';
+            
+            // Add final stats
+            const header = messageDiv.querySelector('.message-header');
+            if (header && msgData.tokens && msgData.cost !== undefined) {
+                const statsSpan = document.createElement('span');
+                statsSpan.textContent = msgData.tokens + ' tokens • $' + msgData.cost.toFixed(4);
+                header.appendChild(statsSpan);
+            }
+            
+            // Add code blocks if present
+            if (msgData.codeBlocks && msgData.codeBlocks.length > 0) {
+                const fileName = msgData.targetFile ? msgData.targetFile.split('/').pop() : 'current file';
+                
+                const btnContainer = document.createElement('div');
+                btnContainer.style.marginTop = '8px';
+                
+                const applyBtn = document.createElement('button');
+                applyBtn.className = 'apply-code-btn';
+                applyBtn.title = 'Apply to ' + fileName;
+                applyBtn.textContent = '⚡ Apply Changes';
+                applyBtn.onclick = function() { applyCode(0); };
+                
+                btnContainer.appendChild(applyBtn);
+                messageDiv.appendChild(btnContainer);
+                
+                const primaryBlock = msgData.codeBlocks.reduce((largest, current) => 
+                    current.code.length > largest.code.length ? current : largest
+                );
+                messageDiv.dataset.codeBlocks = JSON.stringify([primaryBlock]);
+                messageDiv.dataset.targetFile = msgData.targetFile || '';
+            }
+        }
+
+        function addMessage(role, content, model, tokens, cost, references, contextSummary, selection, codeBlocks, targetFile, images) {
             const div = document.createElement('div');
             div.className = 'message ' + role + '-message';
             
-            let html = '';
+            // Safe DOM construction - NO innerHTML
             if (model) {
-                html += '<div class="message-header"><span>' + model + '</span><span>' + tokens + ' tokens • $' + cost.toFixed(4) + '</span></div>';
+                const header = document.createElement('div');
+                header.className = 'message-header';
+                
+                const modelSpan = document.createElement('span');
+                modelSpan.textContent = model;
+                
+                const statsSpan = document.createElement('span');
+                statsSpan.textContent = tokens + ' tokens • $' + cost.toFixed(4);
+                
+                header.appendChild(modelSpan);
+                header.appendChild(statsSpan);
+                div.appendChild(header);
             }
             
             if (selection) {
                 const lineRange = selection.startLine === selection.endLine ? 'Line ' + selection.startLine : 'Lines ' + selection.startLine + '-' + selection.endLine;
-                html += '<div class="message-selection"><div class="selection-header">📝 ' + selection.fileName + ' • ' + lineRange + '</div><pre class="selection-code">' + escapeHtml(selection.code) + '</pre></div>';
+                
+                const selDiv = document.createElement('div');
+                selDiv.className = 'message-selection';
+                
+                const selHeader = document.createElement('div');
+                selHeader.className = 'selection-header';
+                selHeader.textContent = '📝 ' + selection.fileName + ' • ' + lineRange;
+                
+                const selCode = document.createElement('pre');
+                selCode.className = 'selection-code';
+                selCode.textContent = selection.code;
+                
+                selDiv.appendChild(selHeader);
+                selDiv.appendChild(selCode);
+                div.appendChild(selDiv);
             }
             
             if (references && references.length > 0) {
-                const files = references.map(function(f) { return f.split('/').pop(); }).join(', ');
-                html += '<div class="message-references">📎 ' + files + '</div>';
+                const refDiv = document.createElement('div');
+                refDiv.className = 'message-references';
+                
+                for (let i = 0; i < references.length; i++) {
+                    const ref = references[i];
+                    const badge = document.createElement('span');
+                    badge.className = 'reference-badge';
+                    badge.style.display = 'inline-block';
+                    badge.style.marginRight = '6px';
+                    
+                    const lineRange = ref.startLine === ref.endLine 
+                        ? ':' + ref.startLine 
+                        : ':' + ref.startLine + '-' + ref.endLine;
+                    badge.textContent = '📎 ' + ref.fileName + lineRange;
+                    refDiv.appendChild(badge);
+                }
+                
+                div.appendChild(refDiv);
+            }
+            
+            // Show attached images
+            if (images && images.length > 0) {
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'message-images';
+                imgContainer.style.display = 'flex';
+                imgContainer.style.flexWrap = 'wrap';
+                imgContainer.style.gap = '8px';
+                imgContainer.style.marginTop = '8px';
+                
+                for (let i = 0; i < images.length; i++) {
+                    const img = images[i];
+                    const imgWrapper = document.createElement('div');
+                    imgWrapper.style.position = 'relative';
+                    
+                    const imgEl = document.createElement('img');
+                    imgEl.src = img.data;
+                    imgEl.alt = img.name;
+                    imgEl.className = 'image-preview';
+                    imgEl.style.maxWidth = '200px';
+                    imgEl.style.maxHeight = '200px';
+                    imgEl.style.borderRadius = '6px';
+                    imgEl.style.border = '1px solid var(--vscode-panel-border)';
+                    imgEl.style.cursor = 'pointer';
+                    imgEl.onclick = function() {
+                        // Could implement full-size image viewer here
+                        vscode.postMessage({ type: 'openImage', data: img.data });
+                    };
+                    
+                    const imgLabel = document.createElement('div');
+                    imgLabel.textContent = '🖼️ ' + img.name;
+                    imgLabel.style.fontSize = '11px';
+                    imgLabel.style.opacity = '0.7';
+                    imgLabel.style.marginTop = '4px';
+                    
+                    imgWrapper.appendChild(imgEl);
+                    imgWrapper.appendChild(imgLabel);
+                    imgContainer.appendChild(imgWrapper);
+                }
+                
+                div.appendChild(imgContainer);
             }
             
             if (contextSummary) {
-                html += '<div class="message-context">🔍 ' + contextSummary + '</div>';
+                const ctxDiv = document.createElement('div');
+                ctxDiv.className = 'message-context';
+                ctxDiv.textContent = '🔍 ' + contextSummary;
+                div.appendChild(ctxDiv);
             }
             
-            html += '<div class="message-content">' + formatContent(content) + '</div>';
+            // Message content
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = formatContent(content); // formatContent already escapes HTML
+            div.appendChild(contentDiv);
             
             // Add single "Apply Code" button if code blocks are present
             if (codeBlocks && codeBlocks.length > 0) {
                 const fileName = targetFile ? targetFile.split('/').pop() : 'current file';
-                html += '<div style="margin-top: 8px;">';
-                html += '<button class="apply-code-btn" onclick="applyCode(0)" title="Apply to ' + fileName + '">⚡ Apply Changes</button>';
-                html += '</div>';
+                
+                const btnContainer = document.createElement('div');
+                btnContainer.style.marginTop = '8px';
+                
+                const applyBtn = document.createElement('button');
+                applyBtn.className = 'apply-code-btn';
+                applyBtn.title = 'Apply to ' + fileName;
+                applyBtn.textContent = '⚡ Apply Changes';
+                applyBtn.onclick = function() { applyCode(0); };
+                
+                btnContainer.appendChild(applyBtn);
+                div.appendChild(btnContainer);
                 
                 // Store the primary code block for application (use the largest one)
                 const primaryBlock = codeBlocks.reduce((largest, current) => 
@@ -1281,8 +2208,6 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
                 div.dataset.codeBlocks = JSON.stringify([primaryBlock]);
                 div.dataset.targetFile = targetFile || '';
             }
-            
-            div.innerHTML = html;
             
             chatContainer.appendChild(div);
             chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -1352,16 +2277,71 @@ When suggesting models, use these EXACT names. Never invent placeholder names.`;
             return div.innerHTML;
         }
 
+        let codeBlockCounter = 0;
+        
         function formatContent(text) {
             let formatted = escapeHtml(text);
+            
+            // Replace code blocks with wrapper that includes apply button
             formatted = formatted.replace(/\\\`\\\`\\\`(\\w+)?\\n([\\s\\S]*?)\\\`\\\`\\\`/g, function(match, lang, code) {
-                return '<pre><code>' + code + '</code></pre>';
+                const blockId = 'code-block-' + (codeBlockCounter++);
+                const escapedCode = code; // Already escaped by escapeHtml
+                
+                return '<div class="code-block-wrapper" data-code-id="' + blockId + '">' +
+                    '<button class="code-apply-btn" onclick="applyCodeBlock(\'' + blockId + '\')" title="Apply this code change">' +
+                    '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">' +
+                    '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>' +
+                    '</svg>' +
+                    'Apply' +
+                    '</button>' +
+                    '<pre><code class="language-' + (lang || 'text') + '" data-code="' + escapedCode.replace(/"/g, '&quot;') + '">' + escapedCode + '</code></pre>' +
+                    '</div>';
             });
+            
             formatted = formatted.replace(/\\\`([^\\\`]+)\\\`/g, '<code>$1</code>');
             formatted = formatted.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
             formatted = formatted.replace(/\\n/g, '<br>');
             return formatted;
         }
+        
+        window.applyCodeBlock = function(blockId) {
+            const wrapper = document.querySelector('[data-code-id="' + blockId + '"]');
+            if (!wrapper) {
+                return;
+            }
+            
+            const codeElement = wrapper.querySelector('code');
+            const button = wrapper.querySelector('.code-apply-btn');
+            
+            if (!codeElement || !button) {
+                return;
+            }
+            
+            const code = codeElement.getAttribute('data-code');
+            if (!code) {
+                return;
+            }
+            
+            // Visual feedback
+            const originalHtml = button.innerHTML;
+            button.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="animation: spin 1s linear infinite;">' +
+                '<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="2" fill="none" opacity="0.25"/>' +
+                '<path d="M15 8a7 7 0 0 1-7 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>' +
+                '</svg> Applying...';
+            button.disabled = true;
+            
+            // Send to extension to apply
+            vscode.postMessage({
+                type: 'applyCode',
+                code: code
+            });
+            
+            // Reset button after a delay
+            setTimeout(function() {
+                button.innerHTML = originalHtml;
+                button.disabled = false;
+            }, 2000);
+        };
     </script>
 </body>
 </html>`;

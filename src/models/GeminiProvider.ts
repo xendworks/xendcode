@@ -92,38 +92,208 @@ export class GeminiProvider implements IModelProvider {
                     model: modelName
                 });
 
-                // Combine messages into a prompt
-                const prompt = messages
-                    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-                    .join('\n\n');
+                // Check if any message has images (multimodal)
+                const hasImages = messages.some(m => m.images && m.images.length > 0);
 
-                const result = await model.generateContent(prompt);
-                const response = result.response;
-                const content = response.text();
+                if (hasImages) {
+                    // Multimodal request with images
+                    const parts: any[] = [];
 
-                // Gemini doesn't provide token counts in the same way
-                const estimatedTokens = Math.ceil(content.length / 4);
-                const inputTokens = Math.ceil(prompt.length / 4);
+                    for (const message of messages) {
+                        // Add text part
+                        parts.push({
+                            text: `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`
+                        });
 
-                return {
-                    content,
-                    tokensUsed: {
-                        input: inputTokens,
-                        output: estimatedTokens,
-                        total: inputTokens + estimatedTokens
-                    },
-                    model: modelName,
-                    finishReason: 'stop',
-                    cost: 0 // Free!
-                };
+                        // Add image parts if present
+                        if (message.images && message.images.length > 0) {
+                            for (const img of message.images) {
+                                // Convert data URL to inline data format
+                                const base64Data = img.data.split(',')[1]; // Remove "data:image/png;base64," prefix
+                                const mimeType = img.data.split(';')[0].split(':')[1]; // Extract mime type
+
+                                parts.push({
+                                    inlineData: {
+                                        data: base64Data,
+                                        mimeType: mimeType
+                                    }
+                                });
+                            }
+                        }
+                    }
+
+                    const result = await model.generateContent(parts);
+                    const response = result.response;
+                    const content = response.text();
+
+                    const estimatedTokens = Math.ceil(content.length / 4);
+                    const inputTokens = Math.ceil(JSON.stringify(parts).length / 4);
+
+                    return {
+                        content,
+                        tokensUsed: {
+                            input: inputTokens,
+                            output: estimatedTokens,
+                            total: inputTokens + estimatedTokens
+                        },
+                        model: modelName,
+                        finishReason: 'stop',
+                        cost: 0
+                    };
+                } else {
+                    // Text-only request
+                    const prompt = messages
+                        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+                        .join('\n\n');
+
+                    const result = await model.generateContent(prompt);
+                    const response = result.response;
+                    const content = response.text();
+
+                    const estimatedTokens = Math.ceil(content.length / 4);
+                    const inputTokens = Math.ceil(prompt.length / 4);
+
+                    return {
+                        content,
+                        tokensUsed: {
+                            input: inputTokens,
+                            output: estimatedTokens,
+                            total: inputTokens + estimatedTokens
+                        },
+                        model: modelName,
+                        finishReason: 'stop',
+                        cost: 0
+                    };
+                }
             } catch (error: any) {
                 lastError = error;
-                // Try next model name
+                console.error(`Gemini ${modelName} failed:`, error.message);
                 continue;
             }
         }
 
-        // All models failed
+        throw new Error(`Gemini API error: ${lastError?.message}. Tried models: ${modelNames.join(', ')}`);
+    }
+
+    async completeStream(
+        messages: ChatMessage[],
+        options?: CompletionOptions,
+        onChunk?: (chunk: string) => void
+    ): Promise<CompletionResponse> {
+        if (!this.client) {
+            throw new Error('Gemini client not configured');
+        }
+
+        const modelNames = [
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-3-flash-preview',
+            'gemini-3-pro-preview',
+            'gemini-2.5-flash-lite'
+        ];
+
+        let lastError: Error | null = null;
+
+        for (const modelName of modelNames) {
+            try {
+                const model = this.client.getGenerativeModel({ 
+                    model: modelName
+                });
+
+                const hasImages = messages.some(m => m.images && m.images.length > 0);
+
+                if (hasImages) {
+                    // Multimodal streaming
+                    const parts: any[] = [];
+
+                    for (const message of messages) {
+                        parts.push({
+                            text: `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`
+                        });
+
+                        if (message.images && message.images.length > 0) {
+                            for (const img of message.images) {
+                                const base64Data = img.data.split(',')[1];
+                                const mimeType = img.data.split(';')[0].split(':')[1];
+
+                                parts.push({
+                                    inlineData: {
+                                        data: base64Data,
+                                        mimeType: mimeType
+                                    }
+                                });
+                            }
+                        }
+                    }
+
+                    const result = await model.generateContentStream(parts);
+                    let fullContent = '';
+
+                    for await (const chunk of result.stream) {
+                        const chunkText = chunk.text();
+                        if (chunkText) {
+                            fullContent += chunkText;
+                            if (onChunk) {
+                                onChunk(chunkText);
+                            }
+                        }
+                    }
+
+                    const estimatedTokens = Math.ceil(fullContent.length / 4);
+                    const inputTokens = Math.ceil(JSON.stringify(parts).length / 4);
+
+                    return {
+                        content: fullContent,
+                        tokensUsed: {
+                            input: inputTokens,
+                            output: estimatedTokens,
+                            total: inputTokens + estimatedTokens
+                        },
+                        model: modelName,
+                        finishReason: 'stop',
+                        cost: 0
+                    };
+                } else {
+                    // Text-only streaming
+                    const prompt = messages
+                        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+                        .join('\n\n');
+
+                    const result = await model.generateContentStream(prompt);
+                    let fullContent = '';
+
+                    for await (const chunk of result.stream) {
+                        const chunkText = chunk.text();
+                        if (chunkText) {
+                            fullContent += chunkText;
+                            if (onChunk) {
+                                onChunk(chunkText);
+                            }
+                        }
+                    }
+
+                    const estimatedTokens = Math.ceil(fullContent.length / 4);
+                    const inputTokens = Math.ceil(prompt.length / 4);
+
+                    return {
+                        content: fullContent,
+                        tokensUsed: {
+                            input: inputTokens,
+                            output: estimatedTokens,
+                            total: inputTokens + estimatedTokens
+                        },
+                        model: modelName,
+                        finishReason: 'stop',
+                        cost: 0
+                    };
+                }
+            } catch (error: any) {
+                lastError = error;
+                console.error(`Gemini stream ${modelName} failed:`, error.message);
+                continue;
+            }
+        }
+
         throw new Error(`Gemini API error: ${lastError?.message}. Tried models: ${modelNames.join(', ')}`);
     }
 }

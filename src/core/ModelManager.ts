@@ -4,6 +4,7 @@ import { OpenAIProvider } from '../models/OpenAIProvider';
 import { AnthropicProvider } from '../models/AnthropicProvider';
 import { GeminiProvider } from '../models/GeminiProvider';
 import { CohereProvider } from '../models/CohereProvider';
+import { GrokProvider } from '../models/GrokProvider';
 import { GroqProvider } from '../models/GroqProvider';
 import { DeepSeekProvider } from '../models/DeepSeekProvider';
 
@@ -36,12 +37,13 @@ export class ModelManager {
 
         // Initialize all providers
         const providers: IModelProvider[] = [
-            new OpenAIProvider(config.get('models.openai.apiKey', '')),
-            new AnthropicProvider(config.get('models.anthropic.apiKey', '')),
             new GeminiProvider(config.get('models.gemini.apiKey', '')),
-            new CohereProvider(config.get('models.cohere.apiKey', '')),
+            new GrokProvider(config.get('models.grok.apiKey', '')),
             new GroqProvider(config.get('models.groq.apiKey', '')),
-            new DeepSeekProvider(config.get('models.deepseek.apiKey', ''))
+            new DeepSeekProvider(config.get('models.deepseek.apiKey', '')),
+            new CohereProvider(config.get('models.cohere.apiKey', '')),
+            new OpenAIProvider(config.get('models.openai.apiKey', '')),
+            new AnthropicProvider(config.get('models.anthropic.apiKey', ''))
         ];
 
         for (const provider of providers) {

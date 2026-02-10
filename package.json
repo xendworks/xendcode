@@ -1,0 +1,250 @@
+{
+  "name": "xendcode",
+  "displayName": "XendCode - A Better AI Coding Assistant",
+  "description": "Multi-model AI coding assistant leveraging free tokens from multiple providers. Smart routing, one-click code application, and automatic context optimization.",
+  "version": "1.0.0",
+  "publisher": "Xendworks",
+  "author": "Saicharan Govindaraj",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  },
+  "qna": "https://github.com/xendworks/xendcode/discussions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xendworks/xendcode"
+  },
+  "bugs": {
+    "url": "https://github.com/xendworks/xendcode/issues"
+  },
+  "homepage": "https://github.com/xendworks/xendcode#readme",
+  "keywords": [
+    "ai",
+    "assistant",
+    "coding",
+    "code-completion",
+    "refactoring",
+    "multi-model",
+    "gemini",
+    "openai",
+    "claude",
+    "anthropic",
+    "grok",
+    "deepseek",
+    "cohere",
+    "free-tier",
+    "budget-friendly",
+    "copilot"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "xendcode.chat",
+        "title": "XendCode: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "xendcode.openChatEditor",
+        "title": "XendCode: New Chat Editor",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "xendcode.setupWizard",
+        "title": "XendCode: Setup Wizard",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "xendcode.explain",
+        "title": "XendCode: Explain Code"
+      },
+      {
+        "command": "xendcode.refactor",
+        "title": "XendCode: Refactor Code"
+      },
+      {
+        "command": "xendcode.fix",
+        "title": "XendCode: Fix Code"
+      },
+      {
+        "command": "xendcode.configure",
+        "title": "XendCode: Configure API Keys"
+      },
+      {
+        "command": "xendcode.showDashboard",
+        "title": "XendCode: Show Usage Dashboard"
+      },
+      {
+        "command": "xendcode.optimizeContext",
+        "title": "XendCode: Optimize Context"
+      },
+      {
+        "command": "xendcode.login",
+        "title": "XendCode: Login to Cloud Sync"
+      },
+      {
+        "command": "xendcode.logout",
+        "title": "XendCode: Logout"
+      },
+      {
+        "command": "xendcode.testFirebase",
+        "title": "XendCode: Test Firebase Connection"
+      },
+      {
+        "command": "xendcode.managePlaybooks",
+        "title": "XendCode: Manage Org Playbooks"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "xendcode",
+          "title": "XendCode",
+          "icon": "resources/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "xendcode": [
+        {
+          "id": "xendcode.usage",
+          "name": "Token Usage",
+          "type": "tree"
+        },
+        {
+          "id": "xendcode.models",
+          "name": "Active Models",
+          "type": "tree"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "xendcode.chat",
+        "key": "ctrl+cmd+l",
+        "mac": "ctrl+cmd+l"
+      }
+    ],
+    "configuration": {
+      "title": "XendCode",
+      "properties": {
+        "xendcode.models.openai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key (free tier: $5 credits)"
+        },
+        "xendcode.models.anthropic.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API Key"
+        },
+        "xendcode.models.gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (free tier: 60 requests/min)"
+        },
+        "xendcode.models.cohere.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Cohere API Key (free tier: 100 calls/month)"
+        },
+        "xendcode.models.huggingface.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "HuggingFace API Key (free tier available)"
+        },
+        "xendcode.models.grok.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Grok (xAI) API Key - Elon's AI with 131K context"
+        },
+        "xendcode.models.groq.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API Key - Fast inference with free tier"
+        },
+        "xendcode.models.deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (budget-friendly)"
+        },
+        "xendcode.models.mistral.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Mistral API Key - Mistral Large with free tier"
+        },
+        "xendcode.tokenManagement.maxContextTokens": {
+          "type": "number",
+          "default": 8000,
+          "description": "Maximum tokens to use for context"
+        },
+        "xendcode.tokenManagement.aggressiveOptimization": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable aggressive token optimization"
+        },
+        "xendcode.routing.preferFreeTier": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer free tier models when possible"
+        },
+        "xendcode.routing.strategy": {
+          "type": "string",
+          "enum": [
+            "cost-optimized",
+            "performance-optimized",
+            "balanced"
+          ],
+          "default": "cost-optimized",
+          "description": "Model routing strategy"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/node": "20.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/vsce": "^3.7.1",
+    "eslint": "^8.56.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.14.0",
+    "@google/generative-ai": "^0.1.3",
+    "axios": "^1.6.5",
+    "cohere-ai": "^7.7.0",
+    "firebase": "^12.9.0",
+    "grok-sdk": "^0.3.0",
+    "openai": "^4.24.0"
+  }
+}

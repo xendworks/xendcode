@@ -2,7 +2,7 @@
 
 > **The AI coding assistant that won't break the bank** 💰
 
-XendCode is a VSCode extension that intelligently manages multiple AI models' free tiers to provide you with a powerful coding assistant at minimal cost. By leveraging free tokens from providers like Google Gemini, Groq, OpenAI, Anthropic, and others, XendCode can reduce your AI coding costs by up to **95%** compared to paid subscriptions.
+XendCode is a VSCode extension that intelligently manages multiple AI models' free tiers to provide you with a powerful coding assistant at minimal cost. By leveraging free tokens from providers like Google Gemini, grok, OpenAI, Anthropic, and others, XendCode can reduce your AI coding costs by up to **95%** compared to paid subscriptions.
 
 ## 🌟 Features
 
@@ -15,7 +15,7 @@ XendCode is a VSCode extension that intelligently manages multiple AI models' fr
 - **Priority Guidance**: Know which models to add first
 
 ### Multi-Model Intelligence
-- **6+ AI Models**: Google Gemini, OpenAI GPT-3.5, Claude Haiku, Groq Llama, Cohere, DeepSeek
+- **6+ AI Models**: Google Gemini, OpenAI GPT-3.5, Claude Haiku, grok Llama, Cohere, DeepSeek
 - **Smart Model Selection**: Automatically chooses the best model for each task
 - **Free Tier Optimization**: Prioritizes free-tier models to minimize costs
 
@@ -87,8 +87,8 @@ If you prefer manual setup, here's how to get free API keys:
 - Free tier: **60 requests/minute**, 1M token context!
 - **Cost: $0.00/month** ✅
 
-#### Groq (Fast & Free)
-- Visit: https://console.groq.com
+#### grok (Fast & Free)
+- Visit: https://console.grok.com
 - Sign up and get API key
 - Free tier: 30 requests/minute
 - **Cost: $0.00/month** ✅
@@ -124,7 +124,7 @@ If you prefer manual setup, here's how to get free API keys:
 ```json
 {
   "xendcode.models.gemini.apiKey": "your-gemini-key",
-  "xendcode.models.groq.apiKey": "your-groq-key",
+  "xendcode.models.grok.apiKey": "your-grok-key",
   "xendcode.models.openai.apiKey": "your-openai-key",
   "xendcode.models.anthropic.apiKey": "your-anthropic-key",
   "xendcode.models.deepseek.apiKey": "your-deepseek-key",
@@ -168,7 +168,7 @@ XendCode automatically selects the best model for each task:
 | Refactoring | Claude Sonnet, DeepSeek | Deep understanding |
 | Bug Fixing | Claude, GPT-4 | Complex reasoning |
 | Documentation | Gemini, GPT-3.5 | Clear writing |
-| General Chat | Gemini Flash, Groq | Fast responses |
+| General Chat | Gemini Flash, grok | Fast responses |
 
 ## 📊 Real Cost Comparison
 
@@ -202,7 +202,7 @@ Control context size to optimize costs:
 ### Rate Limiting
 XendCode respects free tier rate limits:
 - Gemini: 60 req/min
-- Groq: 30 req/min
+- grok: 30 req/min
 - Cohere: 100 calls/trial
 
 ### Context Optimization
@@ -272,7 +272,7 @@ Built with these amazing AI providers:
 - Google Gemini
 - OpenAI
 - Anthropic
-- Groq
+- grok
 - Cohere
 - DeepSeek
 

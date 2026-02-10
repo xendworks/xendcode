@@ -1,0 +1,49 @@
+# Build and development files
+.vscode/**
+.vscode-test/**
+src/**
+node_modules/**
+out/**
+.gitignore
+.yarnrc
+webpack.config.js
+tsconfig.json
+**/.eslintrc.json
+**/*.map
+**/*.ts
+
+# Documentation (keep README, LICENSE, CHANGELOG, SUPPORT)
+!README.md
+!LICENSE
+!CHANGELOG.md
+!SUPPORT.md
+
+# Test files
+**/.nyc_output
+**/coverage
+**/*.test.ts
+**/*.spec.ts
+
+# Build artifacts
+.DS_Store
+*.vsix
+
+# Project files
+.github/**
+*.md
+!README.md
+!CHANGELOG.md
+BUILD_COMPLETE.md
+DEV_GUIDE.md
+CONTRIBUTING.md
+PROJECT_STRUCTURE.md
+PUBLISHING_GUIDE.md
+PRODUCTION_READY.md
+
+# Shell scripts and publishing tools
+*.sh
+QUICK_PUBLISH.sh
+install-local.sh
+
+# Assets folder (screenshots, etc - keep only icon)
+assets/**

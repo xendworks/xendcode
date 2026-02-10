@@ -52,10 +52,10 @@ Cost: $0/month
 Best For: Everything! Code completion, chat, explanations
 ```
 
-### Step 2: Groq (Fast!)
+### Step 2: grok (Fast!)
 **Priority: HIGH**
 ```
-URL: https://console.groq.com
+URL: https://console.grok.com
 Free Tier: 30 requests/minute
 Cost: $0/month
 Best For: Quick responses, chat
@@ -86,7 +86,7 @@ Add all keys to VSCode settings:
 ```json
 {
   "xendcode.models.gemini.apiKey": "YOUR_GEMINI_KEY",
-  "xendcode.models.groq.apiKey": "YOUR_GROQ_KEY",
+  "xendcode.models.grok.apiKey": "YOUR_grok_KEY",
   "xendcode.models.openai.apiKey": "YOUR_OPENAI_KEY",
   "xendcode.models.cohere.apiKey": "YOUR_COHERE_KEY",
   "xendcode.routing.preferFreeTier": true,
@@ -217,7 +217,7 @@ Instead of many small requests, gather questions and ask in one conversation for
 ### Slow Responses
 **Problem**: Free tier models being throttled
 **Solution**:
-- Add Groq for faster responses
+- Add grok for faster responses
 - Use multiple providers for distribution
 
 ## 📈 Usage Projections
@@ -227,7 +227,7 @@ Instead of many small requests, gather questions and ask in one conversation for
 - **Time to exhaust free tier**: Never
 
 ### Medium User (50k tokens/month)
-- **Gemini + Groq**: $0/month ✅
+- **Gemini + grok**: $0/month ✅
 - **Time to exhaust free tier**: Never
 - **Paid plan equivalent**: $10-20/month
 
